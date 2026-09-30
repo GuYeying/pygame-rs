@@ -1,0 +1,23 @@
+name: Comment Commands
+
+on:
+  issue_comment:
+    types: created
+
+jobs:
+  issue_assign:
+    if: (!github.event.issue.pull_request) && github.event.comment.body == 'take'
+    runs-on: ubuntu-slim
+
+    concurrency:
+      group: ${{ github.actor }}-issue-assign
+
+    permissions:
+      issues: write
+
+    steps:
+      # Using REST API and not `gh issue edit`. https://github.com/cli/cli/issues/6235#issuecomment-1243487651
+      - run: |
+          curl -H "Authorization: token ${{ github.token }}" -d '{"assignees": ["${{ env.USER }}"]}' https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/assignees
+        env:
+          USER:  ${{ github.event.comment.user.login }}

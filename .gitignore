@@ -1,0 +1,17 @@
+# ── 构建产物 ──
+/target
+/jniLibs
+/web
+
+# ── 工具产物 ──
+.VSCodeCounter/
+
+# ── 未引用的大型素材（精简上传决策 2026-09-06：本地保留，不入库；需要时移除对应行） ──
+/resources/objects/
+/resources/textures/pbr/
+/resources/levels/
+
+# ── 系统文件 ──
+.DS_Store
+Thumbs.db
+pygame-rs/src/rpy/dependencies/

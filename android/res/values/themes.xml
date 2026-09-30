@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- starfish 示例主题：全程黑底（启动 splash / 窗口背景 / colorBackground）。
+     注：卓易通容器冷启动的 starting window 恒为白（容器层行为，APK 不可控，
+     v4 的 windowDisablePreview 实测无效已回滚）——本主题优化的是其余阶段。 -->
+<resources>
+    <style name="StarfishTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorBackground">@android:color/black</item>
+        <item name="android:windowSplashScreenBackground">@android:color/black</item>
+    </style>
+</resources>

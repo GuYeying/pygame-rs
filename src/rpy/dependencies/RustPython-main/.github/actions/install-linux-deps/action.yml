@@ -1,0 +1,94 @@
+# This action installs a few dependencies necessary to build RustPython on Linux.
+# It can be configured depending on which libraries are needed:
+#
+# ```
+# - uses: ./.github/actions/install-linux-deps
+#   with:
+#     gcc-multilib: true
+#     musl-tools: false
+# ```
+#
+# See the `inputs` section for all options and their defaults. Note that you must checkout the
+# repository before you can use this action.
+#
+# This action will only install dependencies when the current operating system is Linux. It will do
+# nothing on any other OS (macOS, Windows).
+
+name: Install Linux dependencies
+description: Installs the dependencies necessary to build RustPython on Linux.
+inputs:
+  gcc-multilib:
+    description: Install gcc-multilib (gcc-multilib)
+    required: false
+    default: "false"
+  musl-tools:
+    description: Install musl-tools (musl-tools)
+    required: false
+    default: "false"
+  gcc-aarch64-linux-gnu:
+    description: Install gcc-aarch64-linux-gnu (gcc-aarch64-linux-gnu)
+    required: false
+    default: "false"
+  gcc-mingw-w64-x86-64:
+    description: Install gcc-mingw-w64-x86-64 (gcc-mingw-w64-x86-64)
+    required: false
+    default: "false"
+  clang:
+    description: Install clang (clang)
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Install Linux dependencies
+      shell: bash
+      if: ${{ runner.os == 'Linux' }}
+      env:
+        GCC_MULTILIB: ${{ inputs.gcc-multilib }}
+        MUSL_TOOLS: ${{ inputs.musl-tools }}
+        CLANG: ${{ inputs.clang }}
+        GCC_AARCH64_LINUX_GNU: ${{ inputs.gcc-aarch64-linux-gnu }}
+        GCC_MINGW_W64_X86_64: ${{ inputs.gcc-mingw-w64-x86-64 }}
+      run: |
+        # `apt-get update` has no deadline of its own, so a source that takes
+        # the connection and then stops answering holds the job rather than
+        # failing it, and the retry below never runs. Bound each attempt and
+        # give the transports a timeout to fail on.
+        apt_update() {
+          sudo timeout 300 apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=20 \
+            -o Acquire::https::Timeout=20 \
+            update
+        }
+
+        if ! apt_update; then
+          echo "::warning::apt-get update did not finish; disabling nonessential Microsoft apt sources and retrying"
+          for source in /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure-cli*; do
+            if [ -e "$source" ]; then
+              sudo mv "$source" "$source.disabled"
+            fi
+          done
+          apt_update
+        fi
+
+        packages=()
+        if [[ "$GCC_MULTILIB" == "true" ]]; then
+          packages+=(gcc-multilib)
+        fi
+        if [[ "$MUSL_TOOLS" == "true" ]]; then
+          packages+=(musl-tools)
+        fi
+        if [[ "$CLANG" == "true" ]]; then
+          packages+=(clang)
+        fi
+        if [[ "$GCC_AARCH64_LINUX_GNU" == "true" ]]; then
+          packages+=(gcc-aarch64-linux-gnu linux-libc-dev-arm64-cross libc6-dev-arm64-cross)
+        fi
+        if [[ "$GCC_MINGW_W64_X86_64" == "true" ]]; then
+          packages+=(gcc-mingw-w64-x86-64)
+        fi
+
+        if ((${#packages[@]})); then
+          sudo apt-get install --no-install-recommends "${packages[@]}"
+        fi

@@ -1,0 +1,177 @@
+# cspell:ignore manyhow tinyvec zeroize
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories:
+      - "/"
+      - "crates/*"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      criterion:
+        patterns:
+          - "criterion*"
+      crypto:
+        patterns:
+          - "digest"
+          - "md-5"
+          - "sha-1"
+          - "sha1"
+          - "sha2"
+          - "sha3"
+          - "shake"
+          - "blake2"
+          - "hmac"
+          - "pbkdf2"
+      futures:
+        patterns:
+          - "futures*"
+      get-size2:
+        patterns:
+          - "get-size*2"
+      iana-time-zone:
+        patterns:
+          - "iana-time-zone*"
+      jiff:
+        patterns:
+          - "jiff*"
+      lexical:
+        patterns:
+          - "lexical*"
+      libffi:
+        patterns:
+          - "libffi*"
+      malachite:
+        patterns:
+          - "malachite*"
+      manyhow:
+        patterns:
+          - "manyhow*"
+      num:
+        patterns:
+          - "num-bigint"
+          - "num-complex"
+          - "num-integer"
+          - "num-iter"
+          - "num-rational"
+          - "num-traits"
+      num_enum:
+        patterns:
+          - "num_enum*"
+      openssl:
+        patterns:
+          - "openssl*"
+      parking_lot:
+        patterns:
+          - "parking_lot*"
+      phf:
+        patterns:
+          - "phf*"
+      plotters:
+        patterns:
+          - "plotters*"
+      portable-atomic:
+        patterns:
+          - "portable-atomic*"
+      pyo3:
+        patterns:
+          - "pyo3*"
+      quote-use:
+        patterns:
+          - "quote-use*"
+      random:
+        patterns:
+          - "getrandom"
+          - "mt19937"
+          - "rand*"
+          - "chacha20"
+      rayon:
+        patterns:
+          - "rayon*"
+      regex:
+        patterns:
+          - "regex*"
+      result-like:
+        patterns:
+          - "result-like*"
+      security-framework:
+        patterns:
+          - "security-framework*"
+      serde:
+        patterns:
+          - "serde"
+          - "serde_core"
+          - "serde_derive"
+      system-configuration:
+        patterns:
+          - "system-configuration*"
+      thiserror:
+        patterns:
+          - "thiserror*"
+      time:
+        patterns:
+          - "time*"
+      tinyvec:
+        patterns:
+          - "tinyvec*"
+      tls_codec:
+        patterns:
+          - "tls_codec*"
+      toml:
+        patterns:
+          - "toml*"
+      unix:
+        patterns:
+          - "mac_address"
+          - "nix"
+          - "rustyline"
+      wasm-bindgen:
+        patterns:
+          - "wasm-bindgen*"
+      wasmtime:
+        patterns:
+          - "cranelift*"
+          - "wasmtime*"
+      webpki-root:
+        patterns:
+          - "webpki-root*"
+      windows:
+        patterns:
+          - "windows*"
+      zerocopy:
+        patterns:
+          - "zerocopy*"
+      zeroize:
+        patterns:
+          - "zeroize*"
+    ignore:
+      # TODO: Remove when we use ruff from crates.io
+      # for some reason dependabot only updates the Cargo.lock file when dealing
+      # with git dependencies. i.e. not updating the version in Cargo.toml
+      - dependency-name: "ruff_*"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

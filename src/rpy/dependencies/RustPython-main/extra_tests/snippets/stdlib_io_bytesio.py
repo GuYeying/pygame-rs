@@ -1,0 +1,116 @@
+from io import BytesIO
+
+
+def test_01():
+    bytes_string = b"Test String 1"
+
+    f = BytesIO()
+    f.write(bytes_string)
+
+    assert f.tell() == len(bytes_string)
+    assert f.getvalue() == bytes_string
+
+
+def test_02():
+    bytes_string = b"Test String 2"
+    f = BytesIO(bytes_string)
+
+    assert f.read() == bytes_string
+    assert f.read() == b""
+
+
+def test_03():
+    """
+    Tests that the read method (integer arg)
+    returns the expected value
+    """
+    string = b"Test String 3"
+    f = BytesIO(string)
+
+    assert f.read(1) == b"T"
+    assert f.read(1) == b"e"
+    assert f.read(1) == b"s"
+    assert f.read(1) == b"t"
+
+
+def test_04():
+    """
+    Tests that the read method increments the
+    cursor position and the seek method moves
+    the cursor to the appropriate position
+    """
+    string = b"Test String 4"
+    f = BytesIO(string)
+
+    assert f.read(4) == b"Test"
+    assert f.tell() == 4
+    assert f.seek(0) == 0
+    assert f.read(4) == b"Test"
+
+
+def test_05():
+    """
+    Tests that the write method accepts bytearray
+    """
+    bytes_string = b"Test String 5"
+
+    f = BytesIO()
+    f.write(bytearray(bytes_string))
+
+    assert f.getvalue() == bytes_string
+
+
+def test_06():
+    """
+    Tests readline
+    """
+    bytes_string = b"Test String 6\nnew line is here\nfinished"
+
+    f = BytesIO(bytes_string)
+
+    assert f.readline() == b"Test String 6\n"
+    assert f.readline() == b"new line is here\n"
+    assert f.readline() == b"finished"
+    assert f.readline() == b""
+
+
+def test_07():
+    """
+    Tests that flush() returns None when the file is open,
+    and raises ValueError when the file is closed.
+    CPython reference: Modules/_io/bytesio.c:325-335
+    """
+    f = BytesIO(b"Test String 7")
+
+    # flush() on an open BytesIO returns None
+    assert f.flush() is None
+
+    # flush() is defined directly on BytesIO (not just inherited)
+    assert "flush" in BytesIO.__dict__
+
+    f.close()
+
+    # flush() on a closed BytesIO raises ValueError
+    try:
+        f.flush()
+        assert False, "Expected ValueError not raised"
+    except ValueError:
+        pass
+
+
+if __name__ == "__main__":
+    test_01()
+    test_02()
+    test_03()
+    test_04()
+    test_05()
+    test_06()
+    test_07()
+
+
+# Reading into a buffer that views this same object locks it twice unless the
+# read finishes first.
+_bio = BytesIO(b"x" * 60)
+assert _bio.readinto(_bio.getbuffer()) == 60
+_bio = BytesIO(b"x" * 60)
+assert _bio.readinto(memoryview(_bio.getbuffer())) == 60

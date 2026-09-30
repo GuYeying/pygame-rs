@@ -1,0 +1,147 @@
+name: Lib Dependencies Check
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "Lib/**"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check_deps:
+    permissions:
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Use base branch for scripts (security: don't run PR code with elevated permissions)
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch PR head
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch origin "$PR_HEAD_SHA"
+
+      - name: Checkout PR Lib files
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Checkout only Lib/ directory from PR head for accurate comparison
+          git checkout "$PR_HEAD_SHA" -- Lib/
+
+      - name: Get target CPython version
+        id: cpython-version
+        run: |
+          version=$(cat .python-version)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout CPython
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: python/cpython
+          path: cpython
+          ref: "v${{ steps.cpython-version.outputs.version }}"
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Get changed Lib files
+        id: all-changed-files
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Get the list of changed files under Lib/
+          {
+            echo 'changed<<EOF'
+
+            git diff --name-only "$PR_BASE_SHA" "$PR_HEAD_SHA" -- 'Lib/*.py' 'Lib/**/*.py'
+
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Parse changed files
+        id: changed-files
+        run: |
+          from os import environ
+
+          files = environ["FILES"]
+          modules = set()
+          for file in files.splitlines():
+            file = file.strip()
+
+            if file.startswith("Lib/test/"):
+              # Test files:
+              # Lib/test/test_pydoc.py -> test_pydoc
+              # Lib/test/test_pydoc/foo.py -> test_pydoc
+              module = file.removeprefix("Lib/test/").split("/")[0]
+              if not module.startswith("test_"):
+                continue
+            else:
+              # Lib files:
+              # Lib/foo.py -> foo
+              # Lib/foo/__init__.py -> foo
+              module = file.removeprefix("Lib/").split("/")[0]
+            
+            module = module.split(".")[0]
+            modules.add(module)
+
+          print(f"{modules=}")
+          output = " ".join(sorted(modules))
+          output_file = environ["GITHUB_OUTPUT"]
+          with open(output_file, mode="a", encoding="utf-8") as fd:
+            fd.write(f"modules={output}\n")
+        env:
+          FILES: ${{ steps.all-changed-files.outputs.changed }}
+        shell: python
+
+      - name: Setup Python
+        if: steps.changed-files.outputs.modules != ''
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+
+      - name: Run deps check
+        if: steps.changed-files.outputs.modules != ''
+        id: deps-check
+        run: |
+          # Run deps for all modules at once
+          echo "deps_output<<EOF" >> "$GITHUB_OUTPUT"
+          output=$(python scripts/update_lib deps "${MODULES}"  --depth 2 2>&1 || true)
+          echo "$output" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+        env:
+          MODULES: ${{ steps.changed-files.outputs.modules }}
+
+      - name: Post comment
+        if: steps.deps-check.outputs.deps_output != ''
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: lib-deps-check
+          number: ${{ github.event.pull_request.number }}
+          message: |
+            ## 📦 Library Dependencies
+
+            The following Lib/ modules were modified. Here are their dependencies:
+
+            ${{ steps.deps-check.outputs.deps_output }}
+
+            **Legend:**
+            - `[+]` path exists in CPython
+            - `[x]` up-to-date, `[ ]` outdated
+
+      - name: Remove comment if no Lib changes
+        if: steps.changed-files.outputs.modules == ''
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: lib-deps-check
+          number: ${{ github.event.pull_request.number }}
+          delete: true

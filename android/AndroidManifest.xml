@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Starfish Android 示例 APK 清单（NativeActivity 模板）
+  __LIB_NAME__ 占位符由 scripts/android_run_example.sh 替换为示例名。
+  原理：android.app.NativeActivity 是系统自带 Activity，dlopen lib/__LIB_NAME__.so
+  并调用导出的 android_main —— 无需自有 Java 代码。
+  hasCode=true + classes.dex：robius-file-picker（dialog 模块）经 build.rs 产出
+  FilePickerFragment 的 dex，脚本自动并入 APK 根目录——无 dex 时 dialog 选择器
+  会 ClassNotFoundException。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.starfish.test"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <!-- minSdk 26：cpal AAudio 硬性下限（NDK 的 libaaudio 仅 API 26+ 提供） -->
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+
+    <!-- net 模块（TCP/UDP）必需；未用 net 的示例带上也无害 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 10_record_mic 录音示例需要；运行时授权失败时该示例打印错误路径 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 诊断日志写 /sdcard/Download/<名>_log.txt（卓易通兼容层按 legacy 授予） -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+
+    <!-- wgpu GLES 后端兜底需 GLES 3.x；支持 Vulkan 的设备自动走 Vulkan -->
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <application
+        android:label="starfish"
+        android:hasCode="true"
+        android:requestLegacyExternalStorage="true"
+        android:extractNativeLibs="true">
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="__ORIENTATION__"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
+            android:theme="@style/StarfishTheme">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="__LIB_NAME__" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

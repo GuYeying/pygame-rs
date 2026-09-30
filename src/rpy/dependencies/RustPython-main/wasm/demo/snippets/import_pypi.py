@@ -1,0 +1,20 @@
+# make sys.modules['os'] a dumb version of the os module, which has posixpath
+# available as os.path as well as a few other utilities, but will raise an
+# OSError for anything that actually requires an OS
+import _dummy_os
+import asyncweb
+import whlimport
+
+whlimport.setup()
+
+
+@asyncweb.main
+async def main():
+    await whlimport.load_package("pygments")
+    import pygments
+    import pygments.formatters.html
+    import pygments.lexers
+
+    lexer = pygments.lexers.get_lexer_by_name("python")
+    fmter = pygments.formatters.html.HtmlFormatter(noclasses=True, style="default")
+    print(pygments.highlight("print('hi, mom!')", lexer, fmter))

@@ -1,0 +1,68 @@
+[package]
+name = "pygame-rs"
+version = "0.1.0"
+edition = "2024"
+description = "starfish 的 Python 绑定层：RustPython 内嵌壳 + pygame 绑定面（独立 crate，starfish 本体零 Python 资产）"
+
+[dependencies]
+# 引擎本体（单向依赖：pygame-rs → starfish；starfish 永不感知本 crate）
+# starfish 与本 crate 同级：D:\Projects\Rust\starfish
+starfish = { path = "../starfish" }
+# math 绑定层的 glam 直绑（批次 K Vector3/Quaternion/Mat4；版本与 starfish
+# 相同 semver → cargo 合并为同一实例，零重复）
+glam = "0.33"
+# dialog/io 同步绑定面的 block_on（批次 M；原生平台的 async API 本就是
+# 阻塞实现体外壳——await 处即阻塞处，block_on 语义等价）
+pollster = "0.4"
+# Web 入口宏要求用户 crate 可见 wasm-bindgen（app_entry! 的 start 属性）
+wasm-bindgen = "0.2"
+# RustPython（vendor main 快照 0.6.0-dev，commit 23fcb8d9，2026-09-22）
+# - default-features = false 去 host_env：wasm 必需（crt_fd 依赖不存在），
+#   且 ctypes 恒不用（依赖双向规则的 C 能力替代 = 绑定面 Rust 原生函数）
+# - freeze-stdlib：stdlib 冻结进二进制（无外部 Lib 依赖）
+# - 三处 android 补丁见 src/rpy/dependencies/RustPython-main/（补丁①②③，
+#   位置与缘由见 reference/rustpython改动备忘录.md）
+rustpython-vm = { path = "src/rpy/dependencies/RustPython-main/crates/vm", default-features = false, features = [
+    "compiler", "wasmbind", "gc", "stdio", "importlib", "encodings", "freeze-stdlib",
+] }
+rustpython-pylib = { path = "src/rpy/dependencies/RustPython-main/crates/pylib", features = ["freeze-stdlib"] }
+# RP 派生宏直依赖（批次 B 原生模块树）：pyclass/pymethod/pyattr 等宏的
+# 权威来源——vm 根 re-export 的 glob 因同名冲突只导出部分宏
+rustpython-derive = { path = "src/rpy/dependencies/RustPython-main/crates/derive" }
+
+[[example]]
+name = "rp_hello"
+
+# ── M1 绑定面探针：标准 pygame 写法（原生 pygame 模块 + with 会话渲染）──
+[[example]]
+name = "binding_probe"
+
+[[example]]
+name = "binding_probe_android"
+path = "examples/binding_probe.rs"
+crate-type = ["cdylib"]
+
+# ── 逐模块独立测试案例（共享宿主壳 rpy::testhost）──
+[[example]]
+name = "font_test"
+
+[[example]]
+name = "font_test_android"
+path = "examples/font_test.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "transparent_test"
+
+[[example]]
+name = "transparent_test_android"
+path = "examples/transparent_test.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "draw_test"
+
+[[example]]
+name = "draw_test_android"
+path = "examples/draw_test.rs"
+crate-type = ["cdylib"]

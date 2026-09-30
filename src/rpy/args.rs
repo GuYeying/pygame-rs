@@ -1,0 +1,201 @@
+//! 收参层：Python 参数 → Rust 值的唯一整形点。
+//!
+//! 两组内容（消费方 = 原生 pygame 模块的 pymethod + bridge 的探针/旧全局）：
+//! - [`SfColor`]/[`SfRect`]/[`SfPoint`]/[`SfPoints`]——参数类型，TryFromObject
+//!   一次实现两形态通约（`new_function` 全局与 pymethod 同一条 bind_for 路径）；
+//! - `Draw*Args` / `FillArgs`——draw 族的 FromArgs 收参结构体（pymethod 与
+//!   自由函数皆可直接收整个结构体）。
+//!
+//! 定约：
+//! - 元素一律 **i32 严格 int**（float 拒收，RP 原生报错）；
+//! - 颜色分量 0..=255，越界中文 TypeError；`(r, g, b)` 自动补 alpha=255；
+//! - 序列形态宽收（tuple / list / 任意可迭代），固定长度在类型层校验；
+//! - 批次 C 的 Rect pyclass 落地后，[`SfRect`] / [`SfPoint`] 在此增加
+//!   PyRef 直通分支（"直通句柄"终态）。
+
+use rustpython_derive::FromArgs;
+use rustpython_vm::convert::TryFromObject;
+use rustpython_vm::function::ArgIntoFloat;
+use rustpython_vm::{PyObjectRef, PyResult, VirtualMachine};
+
+// ── 提取辅助 ─────────────────────────────────────────────────────
+
+/// 任意可迭代 → `Vec<i32>`（元素严格 int，非 int 由 RP 原生报错）。
+fn seq_i32(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Vec<i32>> {
+    vm.extract_elements_with(&obj, |o| i32::try_from_object(vm, o))
+}
+
+/// 固定长度校验（`what` = 期望形态的中文描述，统一报错口径）。
+fn expect_len(vm: &VirtualMachine, items: &[i32], n: usize, what: &str) -> PyResult<()> {
+    if items.len() != n {
+        return Err(vm.new_type_error(format!(
+            "{what} 长度必须为 {n}，实际 {} 个分量",
+            items.len()
+        )));
+    }
+    Ok(())
+}
+
+// ── 参数类型 ─────────────────────────────────────────────────────
+
+/// 颜色 `(r, g, b)` 或 `(r, g, b, a)` → RGBA（缺 alpha 补 255）。
+#[derive(Debug, Clone, Copy)]
+pub struct SfColor(pub [u8; 4]);
+
+impl TryFromObject for SfColor {
+    fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
+        let items = seq_i32(vm, obj)?;
+        let rgba: [i32; 4] = match items.as_slice() {
+            [r, g, b] => [*r, *g, *b, 255],
+            [r, g, b, a] => [*r, *g, *b, *a],
+            _ => {
+                return Err(vm.new_type_error(format!(
+                    "颜色须为 (r, g, b) 或 (r, g, b, a)，实际 {} 个分量",
+                    items.len()
+                )))
+            }
+        };
+        for c in rgba {
+            if !(0..=255).contains(&c) {
+                return Err(vm.new_type_error(format!("颜色分量越界（0..=255）：{c}")));
+            }
+        }
+        Ok(Self([rgba[0] as u8, rgba[1] as u8, rgba[2] as u8, rgba[3] as u8]))
+    }
+}
+
+/// 矩形 `(x, y, w, h)`（序列或 `pygame.Rect` 直通句柄）。
+#[derive(Debug, Clone, Copy)]
+pub struct SfRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl TryFromObject for SfRect {
+    fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
+        // 直通句柄分支：pygame.Rect 实例 → 零转换拷贝（批次 C）
+        if let Some(r) = obj.downcast_ref::<crate::rpy::native_pygame::PyRect>() {
+            let r = r.get();
+            return Ok(Self { x: r.left, y: r.top, w: r.width, h: r.height });
+        }
+        let items = seq_i32(vm, obj)?;
+        expect_len(vm, &items, 4, "rect (x, y, w, h)")?;
+        let [x, y, w, h] = items.try_into().unwrap(); // 长度已验
+        Ok(Self { x, y, w, h })
+    }
+}
+
+/// 平面点 `(x, y)`。
+#[derive(Debug, Clone, Copy)]
+pub struct SfPoint(pub i32, pub i32);
+
+impl TryFromObject for SfPoint {
+    fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
+        let items = seq_i32(vm, obj)?;
+        expect_len(vm, &items, 2, "点 (x, y)")?;
+        let [x, y] = items.try_into().unwrap(); // 长度已验
+        Ok(Self(x, y))
+    }
+}
+
+/// 点列：可迭代的 `(x, y)` 序列（pygame draw.polygon 的 points 形态；
+/// 替代 shim 时代"扁平化 `[x,y,...]` + `chunks(2)` 组对"的旧 hack）。
+#[derive(Debug, Clone)]
+pub struct SfPoints(pub Vec<(i32, i32)>);
+
+impl TryFromObject for SfPoints {
+    fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
+        let pts = vm.extract_elements_with(&obj, |o| {
+            SfPoint::try_from_object(vm, o).map(|p| (p.0, p.1))
+        })?;
+        Ok(Self(pts))
+    }
+}
+
+// ── draw 族收参结构体（签名契约源 = bridge.rs 的注册名）─────────
+
+#[derive(FromArgs)]
+pub(crate) struct DrawRectArgs {
+    #[pyarg(any)]
+    pub(crate) color: SfColor,
+    #[pyarg(any)]
+    pub(crate) rect: SfRect,
+    /// 缺省 0 = 填充（pygame draw.rect 惯例）
+    #[pyarg(any, optional)]
+    pub(crate) width: Option<i32>,
+}
+
+#[derive(FromArgs)]
+pub(crate) struct DrawCircleArgs {
+    #[pyarg(any)]
+    pub(crate) color: SfColor,
+    #[pyarg(any)]
+    pub(crate) center: SfPoint,
+    #[pyarg(any)]
+    pub(crate) radius: i32,
+    /// 缺省 0 = 填充（pygame draw.circle 惯例）
+    #[pyarg(any, optional)]
+    pub(crate) width: Option<i32>,
+}
+
+#[derive(FromArgs)]
+pub(crate) struct DrawLineArgs {
+    #[pyarg(any)]
+    pub(crate) color: SfColor,
+    #[pyarg(any)]
+    pub(crate) start: SfPoint,
+    #[pyarg(any)]
+    pub(crate) end: SfPoint,
+    /// 缺省 1（pygame draw.line 惯例）。width 已全程透传至 starfish；
+    /// starfish v1 的 line 渲染恒 1px（`draw.rs` `let _ = width`），
+    /// 加粗随其后续版本落地
+    #[pyarg(any, optional)]
+    pub(crate) width: Option<i32>,
+}
+
+#[derive(FromArgs)]
+pub(crate) struct DrawPolygonArgs {
+    #[pyarg(any)]
+    pub(crate) color: SfColor,
+    #[pyarg(any)]
+    pub(crate) points: SfPoints,
+    /// 缺省 0 = 填充（pygame draw.polygon 惯例）
+    #[pyarg(any, optional)]
+    pub(crate) width: Option<i32>,
+}
+
+#[derive(FromArgs)]
+pub(crate) struct DrawEllipseArgs {
+    #[pyarg(any)]
+    pub(crate) color: SfColor,
+    #[pyarg(any)]
+    pub(crate) rect: SfRect,
+    /// 缺省 0 = 填充（pygame draw.ellipse 惯例）
+    #[pyarg(any, optional)]
+    pub(crate) width: Option<i32>,
+}
+
+#[derive(FromArgs)]
+pub(crate) struct DrawArcArgs {
+    #[pyarg(any)]
+    pub(crate) color: SfColor,
+    #[pyarg(any)]
+    pub(crate) rect: SfRect,
+    /// 起始角（**弧度制**，0 = +x 方向——pygame draw.arc 语义）
+    #[pyarg(any)]
+    pub(crate) start_angle: ArgIntoFloat,
+    /// 终止角（弧度制，向正角方向扫到）
+    #[pyarg(any)]
+    pub(crate) stop_angle: ArgIntoFloat,
+    /// v1 恒 1px（starfish arc 描边简化，宽度收下不生效）；缺省 1
+    #[pyarg(any, optional)]
+    pub(crate) width: Option<i32>,
+}
+
+#[derive(FromArgs)]
+pub(crate) struct FillArgs {
+    #[pyarg(any)]
+    pub(crate) color: SfColor,
+}

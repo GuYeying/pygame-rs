@@ -1,0 +1,302 @@
+# AI Agent Instructions for RustPython
+
+This document provides guidelines for AI coding agents (GitHub Copilot, Claude Code, Gemini, etc.) contributing to the RustPython project.
+
+## Project Overview
+
+RustPython is a Python 3 interpreter written in Rust, implementing Python 3.14.0+ compatibility. The project aims to provide:
+
+- A complete Python-3 environment entirely in Rust (not CPython bindings)
+- A clean implementation without compatibility hacks
+- Cross-platform support, including WebAssembly compilation
+- The ability to embed Python scripting in Rust applications
+
+## Repository Structure
+
+See the "Code organization" section in [CONTRIBUTING.md](CONTRIBUTING.md#code-organization) for the current directory layout.
+
+## AI Agent Rules
+
+**CRITICAL: AI Policy**
+
+- Follow RustPython's [AI Policy](https://github.com/RustPython/.github/blob/main/AI_POLICY.md) for every AI-assisted contribution.
+- Disclose AI assistance in commit messages with an `Assisted-by: AGENT_NAME:MODEL_VERSION` trailer. Use one trailer per AI tool, and never use `Co-authored-by` for an AI assistant.
+
+**CRITICAL: Git Operations**
+- NEVER create pull requests directly without explicit user permission
+- NEVER push commits to remote without explicit user permission
+- Always ask the user before performing any git operations that affect the remote repository
+- Commits can be created locally when requested, but pushing and PR creation require explicit approval
+
+**CRITICAL: Commit Hooks and Validation**
+- Install the repository's pre-commit hook with `prek install` (or `pre-commit install`) after cloning the repository.
+- Every commit must run the configured pre-commit hook. NEVER bypass it with `--no-verify`. Automated workflows that use a normal `git commit`, such as `scripts/update_lib quick`, should be allowed to create local commits through the hook.
+- If a hook auto-fixes files (e.g. `ruff-format`, `rustfmt`), re-stage the fixes and retry the commit. Do not amend or force a failing commit through.
+- Before completing a task, run the tests appropriate for the change. Test commands are documented in the [Testing](#testing) section below. At minimum run `cargo test --workspace --exclude rustpython_wasm --exclude rustpython-venvlauncher --exclude rustpython-capi`, then run `cargo test` from `crates/capi`; if the change touches `extra_tests/snippets/` run `pytest -v` there too, and if it touches `Lib/` or interpreter behavior, run the relevant `cargo run --release -- -m test <module>` modules.
+
+## Important Development Notes
+
+### Running Python Code
+
+When testing Python code, always use RustPython instead of the standard `python` command:
+
+```bash
+# Use this instead of python script.py
+cargo run -- script.py
+
+# For interactive REPL
+cargo run
+
+# With specific features
+cargo run --features jit
+
+# Release mode (recommended for better performance)
+cargo run --release -- script.py
+```
+
+### Comparing with CPython
+
+When you need to compare behavior with CPython or run test suites:
+
+```bash
+# Use python command to explicitly run CPython
+python my_test_script.py
+
+# Run RustPython
+cargo run -- my_test_script.py
+```
+
+### Working with the Lib Directory
+
+The `Lib/` directory contains Python standard library files copied from the CPython repository. Important notes:
+
+- These files should be edited very conservatively
+- Modifications should be minimal and only to work around RustPython limitations
+- Tests in `Lib/test` often use one of the following markers:
+  - Add a `# TODO: RUSTPYTHON` comment when modifications are made
+  - `unittest.skip("TODO: RustPython <reason>")`
+  - `unittest.expectedFailure` with `# TODO: RUSTPYTHON <reason>` comment
+
+#### Choosing the right marker
+
+When marking a test that fails on RustPython, prefer one of the following forms:
+
+```python
+@unittest.expectedFailure  # TODO: RUSTPYTHON; <reason>
+# or
+@unittest.expectedFailureIf(<condition>, "TODO: RUSTPYTHON; <reason>")
+```
+
+If the test would crash the interpreter (segfault, Rust panic, abort, infinite loop), use `skip` instead so the rest of the suite can still run:
+
+```python
+@unittest.skip("TODO: RUSTPYTHON; <reason>")
+# or
+@unittest.skipIf(<condition>, "TODO: RUSTPYTHON; <reason>")
+```
+
+**When to use which:**
+
+- **Prefer `expectedFailure` / `expectedFailureIf`** by default. The test body still runs, so if RustPython is later fixed, the unexpected pass surfaces immediately and the decorator can be removed. Use the conditional `*If` form when the failure is environment-specific (e.g., a platform or build flag).
+- **Use `skip` / `skipIf` only when running the test would take down the test process** — segfaults, Rust panics, aborts, or hangs that block subsequent tests. Skipping keeps the suite usable; `expectedFailure` cannot help here, because the test body still executes.
+
+To find WIP entries that are partly modified and may need follow-up:
+
+```bash
+grep -d recurse 'TODO: RUSTPYTHON' Lib/test/
+```
+
+### Clean Build
+
+When you modify bytecode instructions, a full clean is required:
+
+```bash
+rm -r target/debug/build/rustpython-* && find . | grep -E "\.pyc$" | xargs rm -r
+```
+
+### Testing
+
+```bash
+# Run Rust unit tests
+cargo test --workspace --exclude rustpython_wasm --exclude rustpython-venvlauncher --exclude rustpython-capi
+
+# Run C-API tests from their directory so their separate Cargo config applies
+(cd crates/capi && cargo test)
+
+# Run Clippy with the same C-API separation
+cargo clippy --workspace --all-targets --exclude rustpython_wasm --exclude rustpython-venvlauncher --exclude rustpython-capi
+(cd crates/capi && cargo clippy --all-targets)
+
+# Run Python snippets tests (debug mode recommended for faster compilation)
+cargo run -- extra_tests/snippets/builtin_bytes.py
+
+# Run all Python snippets tests with pytest
+cd extra_tests
+pytest -v
+
+# Run the Python test module (release mode recommended for better performance)
+cargo run --release -- -m test ${TEST_MODULE}
+cargo run --release -- -m test test_unicode # to test test_unicode.py
+
+# Run the Python test module with specific function
+cargo run --release -- -m test test_unicode -k test_unicode_escape
+```
+
+**Note**: For `extra_tests/snippets` tests, use debug mode (`cargo run`) as compilation is faster. For `unittest` (`-m test`), use release mode (`cargo run --release`) for better runtime performance.
+
+### Determining What to Implement
+
+Run `./scripts/whats_left.py` to get a list of unimplemented methods, which is helpful when looking for contribution opportunities.
+
+## Coding Guidelines
+
+### Rust Code
+
+- Follow the default rustfmt code style (`cargo fmt` to format)
+- **IMPORTANT**: Always run clippy to lint code (`cargo clippy`) before completing tasks. Fix any warnings or lints that are introduced by your changes
+- Follow Rust best practices for error handling and memory management
+- Use the macro system (`pyclass`, `pymodule`, `pyfunction`, etc.) when implementing Python functionality in Rust
+
+#### Comments
+
+- Do not delete or rewrite existing comments unless they are factually wrong or directly contradict the new code.
+- Do not add decorative section separators (e.g. `// -----------`, `// ===`, `/* *** */`). Use `///` doc-comments or short `//` comments only when they add value.
+- Do not put `///` doc comments on items annotated with `#[pyattr]`, `#[pyclass]`, or `#[pyfunction]`. The derive macros pull authoritative docstrings from CPython via the `rustpython-doc` crate; a Rust doc comment overrides that source, and on `#[pyattr]` it is silently dropped.
+
+#### Avoid Duplicate Code in Branches
+
+When branches differ only in a value but share common logic, extract the differing value first, then call the common logic once.
+
+**Bad:**
+```rust
+let result = if condition {
+    let msg = format!("message A: {x}");
+    some_function(msg, shared_arg)
+} else {
+    let msg = format!("message B");
+    some_function(msg, shared_arg)
+};
+```
+
+**Good:**
+```rust
+let msg = if condition {
+    format!("message A: {x}")
+} else {
+    format!("message B")
+};
+let result = some_function(msg, shared_arg);
+```
+
+### Python Code
+
+- **IMPORTANT**: In most cases, Python code should not be edited. Bug fixes should be made through Rust code modifications only
+- Follow PEP 8 style for custom Python code
+- Use ruff for linting Python code
+- Minimize modifications to CPython standard library files
+
+## Integration Between Rust and Python
+
+The project provides several mechanisms for integration:
+
+- `pymodule` macro for creating Python modules in Rust
+- `pyclass` macro for implementing Python classes in Rust
+- `pyfunction` macro for exposing Rust functions to Python
+- `PyObjectRef` and other types for working with Python objects in Rust
+
+## Common Patterns
+
+### Implementing a Python Module in Rust
+
+```rust
+#[pymodule]
+mod mymodule {
+    use rustpython_vm::prelude::*;
+
+    #[pyfunction]
+    fn my_function(value: i32) -> i32 {
+        value * 2
+    }
+
+    #[pyattr]
+    #[pyclass(name = "MyClass")]
+    #[derive(Debug, PyPayload)]
+    struct MyClass {
+        value: usize,
+    }
+
+    #[pyclass]
+    impl MyClass {
+        #[pymethod]
+        fn get_value(&self) -> usize {
+            self.value
+        }
+    }
+}
+```
+
+### Adding a Python Module to the Interpreter
+
+```rust
+vm.add_native_module(
+    "my_module_name".to_owned(),
+    Box::new(my_module::make_module),
+);
+```
+
+## Building for Different Targets
+
+### WebAssembly
+
+```bash
+# Build for WASM
+cargo build --target wasm32-wasip1 --no-default-features --features freeze-stdlib,stdlib --release
+```
+
+### JIT Support
+
+```bash
+# Enable JIT support
+cargo run --features jit
+```
+
+### Linux Build and Debug on macOS
+
+See the "Testing on Linux from macOS" section in [CONTRIBUTING.md](CONTRIBUTING.md#testing-on-linux-from-macos).
+
+### Building venvlauncher (Windows)
+
+**IMPORTANT**: All 4 venvlauncher binaries use the same source code. Do NOT add multiple `[[bin]]` entries to Cargo.toml. Build once and copy with different names.
+
+## Test Code Modification Rules
+
+**CRITICAL: Test code modification restrictions**
+- NEVER comment out or delete any test code lines except for removing `@unittest.expectedFailure` decorators and upper TODO comments
+- NEVER modify test assertions, test logic, or test data
+- When a test cannot pass due to missing language features, keep it as expectedFailure and document the reason
+- The only acceptable modifications to test files are:
+  1. Removing `@unittest.expectedFailure` decorators and the upper TODO comments when tests actually pass
+  2. Adding `@unittest.expectedFailure` decorators when tests cannot be fixed
+
+**Examples of FORBIDDEN modifications:**
+- Commenting out test lines
+- Changing test assertions
+- Modifying test data or expected results
+- Removing test logic
+
+**Correct approach when tests fail due to unsupported syntax:**
+- Keep the test as `@unittest.expectedFailure`
+- Document that it requires PEP 695 support
+- Focus on tests that can be fixed through Rust code changes only
+
+## CI Workflows
+
+If you modify any file under `.github/workflows/`, the change must pass a [zizmor](https://docs.zizmor.sh/) scan in CI.
+
+## Documentation
+
+- Check the [architecture document](/architecture/architecture.md) for a high-level overview
+- Read the [development guide](/CONTRIBUTING.md) for detailed setup instructions
+- Generate documentation with `cargo doc --no-deps --all`
+- Online documentation is available at [docs.rs/rustpython](https://docs.rs/rustpython/)
+- [How to update test files](https://github.com/RustPython/RustPython/wiki/How-to-update-test-files#checkout-cpython-source-code-initial-setup) — guide for syncing test cases from upstream CPython into the `Lib/` directory

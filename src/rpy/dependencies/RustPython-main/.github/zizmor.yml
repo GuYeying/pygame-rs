@@ -1,0 +1,29 @@
+rules:
+  dangerous-triggers:
+    ignore:
+      # pull_request_target is needed to label and assign PRs from forks with issues: write.
+      # The workflow does not check out or execute pull request code.
+      - oscca-pr.yml:3
+      # workflow_run is needed to post a PR comment from a fork's run, which is
+      # handed a read-only token however the triggering workflow is configured.
+      # The workflow does not check out or execute pull request code: it reads
+      # one artifact and writes a comment.
+      - pyperformance-comment.yaml:1
+  excessive-permissions:
+    ignore:
+      # pull_request_target is needed to post PR comments with pull-requests: write.
+      # Workflow-level permissions: {} restricts defaults; only the job has write access.
+      - lib-deps-check.yaml:3
+  unpinned-uses:
+    config:
+      policies:
+        # dtolnay/rust-toolchain is a trusted action that uses lightweight branch
+        # refs (@stable, @nightly, etc.) by design. Pinning to a hash would break
+        # the intended usage pattern.
+        # We can remove this once https://github.com/dtolnay/rust-toolchain/issues/180 is resolved
+        dtolnay/rust-toolchain: any
+  # dtolnay/rust-toolchain handles component installation, target addition, and
+  # override configuration beyond what a bare `rustup` invocation provides.
+  # See: https://github.com/zizmorcore/zizmor/issues/1817
+  superfluous-actions:
+    disable: true

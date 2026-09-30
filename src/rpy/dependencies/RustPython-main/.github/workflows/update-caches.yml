@@ -1,0 +1,88 @@
+name: Update Actions Caches
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_RELEASE_DEBUG: 0
+  # Keep feature list in sync with CI's release build in .github/workflows/ci.yaml.
+  CARGO_ARGS: --workspace --no-default-features --features stdlib,importlib,stdio,encodings,sqlite,ssl-rustls-aws-lc,host_env,threading,jit --exclude rustpython_wasm --exclude rustpython-venvlauncher
+
+jobs:
+  build-caches:
+    name: Build Caches
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            toolchain: stable
+            target: ""
+          - os: ubuntu-latest
+            toolchain: stable
+            target: ""
+          - os: windows-latest
+            toolchain: stable
+            target: ""
+    steps:
+      - name: Checkout RustPython main branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: RustPython/RustPython
+          ref: main
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          target: ${{ matrix.target }}
+
+      - name: Use a short Cargo home on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP\c" >> $env:GITHUB_ENV
+          git config --global core.longpaths true
+
+      - name: Install macos dependencies
+        uses: ./.github/actions/install-macos-deps
+        with:
+          openssl: true
+
+      - name: Build dev cache # dev profile used by check & doc
+        run: cargo build --locked --profile dev ${{ env.CARGO_ARGS }}
+
+      - name: Build test cache
+        run: cargo build --locked --profile test ${{ env.CARGO_ARGS }}
+
+      - name: Build release cache
+        run: cargo build --locked --profile release ${{ env.CARGO_ARGS }}
+
+      - name: Save cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ${{ runner.temp }}/c/registry/index/
+            ${{ runner.temp }}/c/registry/cache/
+            ${{ runner.temp }}/c/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.toolchain }}-${{ matrix.target }}-${{ hashFiles('**/Cargo.toml') }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}

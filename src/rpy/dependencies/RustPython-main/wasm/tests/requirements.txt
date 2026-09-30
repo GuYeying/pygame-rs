@@ -1,0 +1,3 @@
+pytest
+selenium==4.36.0
+certifi
