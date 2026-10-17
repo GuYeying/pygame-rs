@@ -1,6 +1,6 @@
 [package]
 name = "pygame-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "starfish 的 Python 绑定层：RustPython 内嵌壳 + pygame 绑定面（独立 crate，starfish 本体零 Python 资产）"
 
