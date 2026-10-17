@@ -6,7 +6,7 @@ import pygame
 
 def game():
     # flags 落地验证（批次 O 扩展）：尺寸跟随 + 可调整大小
-    screen = pygame.display.set_mode((1000, 700), pygame.RESIZABLE)
+    screen = pygame.display.set_mode((1000, 700), pygame.display.RESIZABLE)
     _fail = []
 
     def st(name, cond):
@@ -108,13 +108,14 @@ def game():
 
     while True:
         for e in pygame.event.get():
-            if e.type == pygame.QUIT:
+            if e.type == pygame.event.QUIT:
                 return
-            if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+            if e.type == pygame.event.KEYDOWN and e.key == pygame.event.K_ESCAPE:
                 return
 
-        screen.fill((24, 24, 34))
+        
         with screen.render() as r:
+            r.fill((24, 24, 34))
             y = 12
             for surf in spec:
                 r.blit(surf, (12, y))

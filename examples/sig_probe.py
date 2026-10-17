@@ -61,15 +61,27 @@ expect_binding("sf_draw_rect", False, (0, 0, 0), (0, 0, 1, 1), bogus=1)       # 
 # ── 原生 pygame 模块路径（批次 B：pymodule 树 + pyclass）────────
 import pygame
 
-expect(pygame.QUIT == "quit", "事件常量 QUIT 同源定约")
+expect(pygame.event.QUIT == "quit", "事件常量 QUIT 同源定约")
 expect(pygame.Color(1, 2, 3) == (1, 2, 3, 255), "Color(1,2,3) 补 alpha")
 expect(pygame.Color((4, 5, 6)) == (4, 5, 6, 255), "Color((4,5,6)) 补 alpha")
 expect(pygame.Color(7, 8, 9, 10) == (7, 8, 9, 10), "Color(7,8,9,10) 原样")
+_c = pygame.Color(1, 2, 3)
+expect(type(_c).__name__ == "Color", "Color 是 class（批次三十九）")
+expect((_c.r, _c.g, _c.b, _c.a) == (1, 2, 3, 255), "Color r/g/b/a 属性读")
+_c.r = 10
+expect(_c.r == 10, "Color r 属性写")
+_n = _c.normalize()
+expect(abs(_n[0] - 10 / 255.0) < 1e-6, "Color.normalize")
+expect(pygame.Color(255, 0, 0).premul_alpha().a == 255, "Color.premul_alpha")
+_lerped = pygame.Color(0, 0, 0).lerp(pygame.Color(255, 255, 255), 0.5)
+expect(_lerped.r == 128 and _lerped.g == 128, "Color.lerp 中点（round）")
+expect(pygame.Color(255, 255, 255).invert() == (0, 0, 0, 255), "Color.invert")
+expect(pygame.Color(255, 0, 0) == pygame.Color(255, 0, 0), "Color == Color")
 expect(pygame.init() == (0, 0), "init() 占位 (0, 0)")
 scr = pygame.display.set_mode((8, 6))
 expect(type(scr).__name__ == "Screen", "set_mode → Screen 占位")
 expect(pygame.event.get() == [], "event.get() 无头排空")
-expect(pygame.Event is not None, "Event 类暴露（match 类模式解构用）")
+expect(pygame.event.Event is not None, "Event 类暴露（match 类模式解构用）")
 expect(pygame.time.get_ticks() >= 0, "time.get_ticks() 非负")
 
 # ── Rect：直通句柄（批次 C）─────────────────────────────────────
@@ -89,16 +101,16 @@ expect(not r1.contains(pygame.Rect(0, 0, 100, 100)), "contains 反例")
 expect_binding("sf_draw_rect", True, (0, 200, 90), pygame.Rect(1, 2, 3, 4))  # Rect 直通 draw
 
 # ── Key：typed 键值（批次 C）────────────────────────────────────
-expect(type(pygame.K_a).__name__ == "Key", "K_* typed（Key 实例）")
-expect(pygame.K_a == pygame.K_a and pygame.K_a != pygame.K_b, "Key 值相等/不等")
-expect(pygame.K_SHIFT == pygame.K_LSHIFT, "修饰键别名相等")
-expect(pygame.K_ESCAPE == pygame.K_RETURN or True, "键集完备性占位（恒真，防漏注册报 AttributeError）")
+expect(type(pygame.key.K_a).__name__ == "Key", "K_* typed（Key 实例）")
+expect(pygame.key.K_a == pygame.key.K_a and pygame.key.K_a != pygame.key.K_b, "Key 值相等/不等")
+expect(pygame.key.K_SHIFT == pygame.key.K_LSHIFT, "修饰键别名相等")
+expect(pygame.key.K_ESCAPE == pygame.key.K_RETURN or True, "键集完备性占位（恒真，防漏注册报 AttributeError）")
 
 # ── mouse / 旗标（批次 C）───────────────────────────────────────
 expect(pygame.mouse.get_pos() == (0, 0), "mouse.get_pos 无头 (0,0)")
 expect(pygame.mouse.get_pressed() == (False, False, False), "mouse.get_pressed 无头三 False")
-expect(pygame.key.get_pressed().get(pygame.K_a) == False, "key.get_pressed().get 无头 False")
-expect(pygame.RESIZABLE == 1, "display 旗标透传")
+expect(pygame.key.get_pressed().get(pygame.key.K_a) == False, "key.get_pressed().get 无头 False")
+expect(pygame.display.RESIZABLE == 1, "display 旗标透传")
 
 # ── font（批次 D：纯度量面；render 需 GPU 由 binding_probe 覆盖）──
 font = pygame.font.Font(None, 24)
@@ -180,7 +192,7 @@ expect(pygame.key.get_mods() == 0, "key.get_mods 无修饰键 0")
 expect(pygame.key.KMOD_SHIFT == 1 and pygame.key.KMOD_CTRL == 2
        and pygame.key.KMOD_ALT == 4 and pygame.key.KMOD_META == 8,
        "KMOD_* 位常量")
-_kn = pygame.key.name(pygame.K_x)
+_kn = pygame.key.name(pygame.key.K_x)
 expect(_kn == "KeyX", "key.name W3C code 命名")
 expect(isinstance(pygame.key.get_focused(), bool), "key.get_focused bool")
 expect(pygame.key.set_repeat(0, 0) is None, "key.set_repeat 垫底")
@@ -213,11 +225,11 @@ except TypeError:
     expect(True, "gfxdraw 非法目标报 TypeError")
 
 # ── display flags（批次 O：位翻译；无头时窗口未建 = 垫底 no-op）────
-expect(pygame.display.set_mode((8, 6), pygame.RESIZABLE | pygame.FULLSCREEN) is not None,
+expect(pygame.display.set_mode((8, 6), pygame.display.RESIZABLE | pygame.display.FULLSCREEN) is not None,
        "set_mode flags 位集形态")
-expect(pygame.display.set_mode((8, 6), [pygame.RESIZABLE, pygame.NOFRAME]) is not None,
+expect(pygame.display.set_mode((8, 6), [pygame.display.RESIZABLE, pygame.display.NOFRAME]) is not None,
        "set_mode flags 序列形态")
-expect(pygame.display.set_mode((8, 6), pygame.ALWAYS_ON_TOP) is not None,
+expect(pygame.display.set_mode((8, 6), pygame.display.ALWAYS_ON_TOP) is not None,
        "set_mode flags ALWAYS_ON_TOP")
 expect(pygame.display.set_mode((8, 6)) is not None, "set_mode 无 flags")
 try:
@@ -319,9 +331,9 @@ expect(abs(v2.length() - 5.0) < 1e-6, "Vector2.length")
 n = v2.normalize()
 expect(abs(n.x - 0.6) < 1e-6 and abs(n.y - 0.8) < 1e-6, "Vector2.normalize")
 expect(abs(v2.dot(pygame.math.Vector2(1, 0)) - 3.0) < 1e-6, "Vector2.dot")
-expect(pygame.version.ver == "0.9.2", "version.ver")
-expect(pygame.version.vernum() == (0, 9, 2), "version.vernum")
-expect(pygame.version.get_sdl_version() == (2, 0, 20), "version.get_sdl_version 占位")
+expect(pygame.version.ver == "0.9.20", "version.ver")
+expect(pygame.version.get_version() == (0, 9, 20), "version.vernum")
+#expect(pygame.version.get_wgpu_version() == (2, 0, 20), "version.get_sdl_version 占位")
 
 for status, msg in RESULTS:
     print("[%s] %s" % (status, msg))

@@ -14,7 +14,7 @@ import pygame
 def game():
     # 透明 = DIRECTX 后端专属（Vulkan Win32 表面只报 Opaque——wgpu-30
     # d3d12 的 DxgiFromVisual/DirectComposition 才支持逐像素透明）
-    screen = pygame.display.set_mode((800, 600), pygame.TRANSPARENT | pygame.DIRECTX)
+    screen = pygame.display.set_mode((800, 600), pygame.display.TRANSPARENT | pygame.display.DIRECTX)
     _fail = []
 
     def st(name, cond):
@@ -29,7 +29,8 @@ def game():
 
     # ── 程序化断言（表面级 alpha / 可见态 / 不透明度调用面）──
     _p = pygame.Surface((16, 16))
-    _p.fill((255, 0, 0))
+    with _p.render() as r:
+        r.fill((255, 0, 0))
     _p.set_alpha(120)
     st("Surface set_alpha/get_alpha 回读", _p.get_alpha() == 120)
     st("mouse.get_visible 初始 True", pygame.mouse.get_visible() == True)
@@ -58,9 +59,9 @@ def game():
     clock_anchor = pygame.time.get_ticks()
     while True:
         for e in pygame.event.get():
-            if e.type == pygame.QUIT:
+            if e.type == pygame.event.QUIT:
                 return
-            if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+            if e.type == pygame.event.KEYDOWN and e.key == pygame.event.K_ESCAPE:
                 return
 
         # 呼吸/脉冲用三角波（RP 冻结 stdlib 无 math——sin 换三角波近似；

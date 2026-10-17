@@ -59,6 +59,21 @@ def game():
             pygame.gfxdraw.rectangle(t, (70, 12, 50, 36), (255, 120, 255))
     no_raise("gfxdraw 兼容面", lambda: gfx(off))
 
+    # vertices/geometry 逃逸舱（原始顶点 + 索引几何）
+    def raw_verts(s):
+        with s.render() as t:
+            t.vertices("triangles", [(10, 10), (90, 10), (50, 90)], (120, 220, 255))
+            t.vertices("lines", [(10, 100), (90, 100)], (255, 160, 60))
+    no_raise("vertices 三角/线", lambda: raw_verts(off))
+
+    def raw_geom(s):
+        with s.render() as t:
+            t.geometry("filled", [(10, 10), (90, 10), (90, 90), (10, 90)],
+                       [0, 1, 2, 0, 2, 3], (120, 255, 160))
+            t.geometry("line", [(10, 10), (90, 10), (90, 90), (10, 90)],
+                       None, (255, 120, 255))
+    no_raise("geometry 索引填充/线框", lambda: raw_geom(off))
+
     # 负路径：颜色分量不足 / 非法项
     def bad_color(s):
         with s.render() as t:
@@ -87,13 +102,14 @@ def game():
 
     while True:
         for e in pygame.event.get():
-            if e.type == pygame.QUIT:
+            if e.type == pygame.event.QUIT:
                 return
-            if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+            if e.type == pygame.event.KEYDOWN and e.key == pygame.event.K_ESCAPE:
                 return
 
-        screen.fill((24, 24, 34))
+        
         with screen.render() as r:
+            r.fill((24, 24, 34))
             r.blit(label, (12, 8))
             # 第一区：矩形三形态
             r.rect((0, 200, 90), (20, 40, 120, 80))
@@ -120,5 +136,14 @@ def game():
             r.blit(spec[3], (420, 290))
             # 离屏 Surface 会话产物 blit（独立绘制目标）
             r.blit(off, (20, 460))
+            # 第五区：vertices/geometry 逃逸舱（批次三十八——原始顶点 +
+            # 索引几何直通；主体三角扇 + 线框）
+            r.vertices("triangles",
+                       [(560, 460), (760, 460), (760, 560), (560, 560), (660, 620)],
+                       (90, 120, 220))
+            r.vertices("lines", [(560, 460), (760, 460), (760, 560), (560, 560)],
+                       (255, 255, 255))
+            r.geometry("filled", [(580, 480), (740, 480), (740, 540), (580, 540)],
+                       [0, 1, 2, 0, 2, 3], (255, 160, 60))
         pygame.display.flip()
         yield

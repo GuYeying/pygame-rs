@@ -7,25 +7,28 @@
 
 use std::cell::Cell;
 use rustpython_derive::{pyclass, FromArgs};
-use rustpython_vm::function::PyComparisonValue;
+use rustpython_vm::function::{FuncArgs, PyComparisonValue};
 use rustpython_vm::types::{Comparable, Constructor, PyComparisonOp, Representable};
 use rustpython_vm::convert::TryFromObject;
 use rustpython_vm::{
     Py, PyObject, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
     builtins::{PyStr, PyType},
 };
+use starfish::pygame::color::Color as EngineColor;
 use starfish::pygame::Rect as EngineRect;
 use starfish::pygame::render::{DrawTarget, Surface as SfSurface};
 
-use crate::rpy::native_pygame::pygame::font::{DEFAULT_FONT, PyFont};
+use crate::rpy::native_pygame::pygame::font::PyFont;
+use crate::rpy::native_pygame::pygame::DEFAULT_FONT;
 use crate::rpy::bridge;
 use crate::rpy::native_pygame::pygame::mixer::PySound;
 use crate::rpy::native_pygame::pygame::PySurface;
-use crate::rpy::native_pygame::pygame::{PyKey, PyRect};
+use crate::rpy::native_pygame::pygame::{PyColor, PyRect, PyScreenSession, PySurfaceSession};
+use crate::rpy::args::{SfColor, SfPoint, SfRect};
+use crate::rpy::native_pygame::pygame::event::PyKey;
 
 /// Session 绘制方法的 Rect 形参别名
 type PyRectRef = PyRef<PyRect>;
-use crate::rpy::args::{SfColor, SfPoint};
 
     impl PyRect {
         /// 直通句柄读取（args::SfRect 直通分支用）
@@ -307,12 +310,213 @@ use crate::rpy::args::{SfColor, SfPoint};
         })
     }
 
+    // ── Color（批次三十九：替代旧 fn Color 函数——starfish Color 直通）──
+    impl PyColor {
+        /// 直通句柄读取（args::SfColor 直通分支用）
+        pub(crate) fn get(&self) -> EngineColor {
+            self.0.get()
+        }
+    }
+
+    #[pyclass(with(Constructor, Comparable, Representable))]
+    impl PyColor {
+        #[pygetset]
+        fn r(&self) -> u8 {
+            self.0.get().r
+        }
+        #[pygetset(setter)]
+        fn set_r(&self, v: u8) {
+            let mut c = self.0.get();
+            c.update(v, c.g, c.b, c.a);
+            self.0.set(c);
+        }
+        #[pygetset]
+        fn g(&self) -> u8 {
+            self.0.get().g
+        }
+        #[pygetset(setter)]
+        fn set_g(&self, v: u8) {
+            let mut c = self.0.get();
+            c.update(c.r, v, c.b, c.a);
+            self.0.set(c);
+        }
+        #[pygetset]
+        fn b(&self) -> u8 {
+            self.0.get().b
+        }
+        #[pygetset(setter)]
+        fn set_b(&self, v: u8) {
+            let mut c = self.0.get();
+            c.update(c.r, c.g, v, c.a);
+            self.0.set(c);
+        }
+        #[pygetset]
+        fn a(&self) -> u8 {
+            self.0.get().a
+        }
+        #[pygetset(setter)]
+        fn set_a(&self, v: u8) {
+            let mut c = self.0.get();
+            c.update(c.r, c.g, c.b, v);
+            self.0.set(c);
+        }
+
+        /// 归一化 0.0..1.0 四元组（pygame 惯例）
+        #[pymethod]
+        fn normalize(&self) -> (f32, f32, f32, f32) {
+            self.0.get().normalize()
+        }
+
+        /// 预乘 alpha（返回新 Color）
+        #[pymethod]
+        fn premul_alpha(&self, vm: &VirtualMachine) -> PyRef<Self> {
+            Self(Cell::new(self.0.get().premul_alpha())).into_ref(&vm.ctx)
+        }
+
+        /// 线性插值（返回新 Color）
+        #[pymethod]
+        fn lerp(&self, other: PyRef<Self>, amount: f32, vm: &VirtualMachine) -> PyRef<Self> {
+            Self(Cell::new(self.0.get().lerp(&other.0.get(), amount))).into_ref(&vm.ctx)
+        }
+
+        /// 灰度化（返回新 Color）
+        #[pymethod]
+        fn grayscale(&self, vm: &VirtualMachine) -> PyRef<Self> {
+            Self(Cell::new(self.0.get().grayscale())).into_ref(&vm.ctx)
+        }
+
+        /// 反色（返回新 Color）
+        #[pymethod]
+        fn invert(&self, vm: &VirtualMachine) -> PyRef<Self> {
+            Self(Cell::new(self.0.get().invert())).into_ref(&vm.ctx)
+        }
+
+        /// 伽马校正（返回新 Color）
+        #[pymethod]
+        fn correct_gamma(&self, gamma: f32, vm: &VirtualMachine) -> PyRef<Self> {
+            Self(Cell::new(self.0.get().correct_gamma(gamma))).into_ref(&vm.ctx)
+        }
+    }
+
+    impl Constructor for PyColor {
+        type Args = FuncArgs;
+
+        fn py_new(
+            _cls: &Py<PyType>,
+            args: Self::Args,
+            vm: &VirtualMachine,
+        ) -> PyResult<Self> {
+            // 构造形态：Color() / Color(r,g,b) / Color(r,g,b,a) /
+            // Color((r,g,b[,a])) / Color("name") / Color(Color)（拷贝）
+            let c = match args.args.len() {
+                0 => EngineColor::rgb(0, 0, 0),
+                1 => {
+                    let o = &args.args[0];
+                    if let Some(s) = o.downcast_ref::<PyStr>() {
+                        let name = s
+                            .to_str()
+                            .ok_or_else(|| vm.new_value_error("色彩名含非 UTF-8 字符"))?;
+                        EngineColor::from_name(name).ok_or_else(|| {
+                            vm.new_value_error(format!("未知色彩名：{name:?}"))
+                        })?
+                    } else if let Some(cc) = o.downcast_ref::<PyColor>() {
+                        cc.0.get()
+                    } else {
+                        let SfColor(rgba) = SfColor::try_from_object(vm, o.clone())?;
+                        EngineColor::new(rgba[0], rgba[1], rgba[2], rgba[3])
+                    }
+                }
+                3 => {
+                    let (r, g, b) = (
+                        u8_of(&args.args[0], vm)?,
+                        u8_of(&args.args[1], vm)?,
+                        u8_of(&args.args[2], vm)?,
+                    );
+                    EngineColor::rgb(r, g, b)
+                }
+                4 => {
+                    let (r, g, b, a) = (
+                        u8_of(&args.args[0], vm)?,
+                        u8_of(&args.args[1], vm)?,
+                        u8_of(&args.args[2], vm)?,
+                        u8_of(&args.args[3], vm)?,
+                    );
+                    EngineColor::new(r, g, b, a)
+                }
+                n => {
+                    return Err(vm.new_type_error(format!(
+                        "Color 构造须 0/1/3/4 参，实际 {n} 参"
+                    )))
+                }
+            };
+            Ok(Self(Cell::new(c)))
+        }
+    }
+
+    impl Comparable for PyColor {
+        fn cmp(
+            zelf: &Py<Self>,
+            other: &PyObject,
+            op: PyComparisonOp,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyComparisonValue> {
+            if op != PyComparisonOp::Eq {
+                return Ok(PyComparisonValue::NotImplemented);
+            }
+            let c = zelf.0.get();
+            // Color == Color
+            if let Some(o) = other.downcast_ref::<PyColor>() {
+                return Ok(PyComparisonValue::Implemented(c == o.0.get()));
+            }
+            // Color == (r,g,b[,a])（兼容旧 fn Color 的元组契约）
+            if let Some(t) = other.downcast_ref::<rustpython_vm::builtins::PyTuple>() {
+                let items = t.as_slice();
+                let eq = match items.len() {
+                    3 => {
+                        c.r as i32 == int_of(&items[0], vm)
+                            && c.g as i32 == int_of(&items[1], vm)
+                            && c.b as i32 == int_of(&items[2], vm)
+                    }
+                    4 => {
+                        c.r as i32 == int_of(&items[0], vm)
+                            && c.g as i32 == int_of(&items[1], vm)
+                            && c.b as i32 == int_of(&items[2], vm)
+                            && c.a as i32 == int_of(&items[3], vm)
+                    }
+                    _ => false,
+                };
+                return Ok(PyComparisonValue::Implemented(eq));
+            }
+            Ok(PyComparisonValue::NotImplemented)
+        }
+    }
+
+    impl Representable for PyColor {
+        fn repr(zelf: &Py<Self>, vm: &VirtualMachine) -> PyResult<PyRef<PyStr>> {
+            let c = zelf.0.get();
+            Ok(vm.ctx.new_str(format!("Color({}, {}, {}, {})", c.r, c.g, c.b, c.a)))
+        }
+    }
+
+    /// 对象 → u8 通道值（越界报错）
+    fn u8_of(o: &PyObjectRef, vm: &VirtualMachine) -> PyResult<u8> {
+        let i = i32::try_from_object(vm, o.clone())
+            .map_err(|_| vm.new_type_error("颜色分量须为整数"))?;
+        if !(0..=255).contains(&i) {
+            return Err(vm.new_type_error(format!("颜色分量越界（0..=255）：{i}")));
+        }
+        Ok(i as u8)
+    }
+
+    /// tuple 元素 → i32（Comparable 用；失败 = 0，仅比较语义）
+    fn int_of(o: &PyObjectRef, vm: &VirtualMachine) -> i32 {
+        i32::try_from_object(vm, o.clone()).unwrap_or(0)
+    }
 
 #[pyclass(with(Comparable))]
 impl PyKey {}
 
 impl Comparable for PyKey {
-
         fn cmp(
             zelf: &Py<Self>,
             other: &PyObject,
@@ -382,22 +586,23 @@ impl PySound {
 // ── PySurface（批次 F）：starfish Surface 直通句柄 ────────────────
 
 impl Constructor for PySurface {
-    /// Surface((w, h))：GPU 需已 init（构造/使用须在 display init 后——
-    /// 与真 pygame 的差异，文档标注）
-    type Args = (SfPoint,);
+    /// Surface((w, h), depth_buffer=False)：GPU 需已 init（构造/使用须在
+    /// display init 后——与真 pygame 的差异，文档标注）。depth_buffer=
+    /// 深度缓冲（绑定定约 §九.2——`depth=` 为真 pygame bpp 语义，禁用）。
+    type Args = crate::rpy::args::SurfaceArgs;
 
     fn py_new(
         _cls: &Py<PyType>,
         args: Self::Args,
         _vm: &VirtualMachine,
     ) -> PyResult<Self> {
-        let (size,) = args;
-        Ok(Self {
-            surface: std::sync::Arc::new(SfSurface::new((
-                size.0.max(0) as u32,
-                size.1.max(0) as u32,
-            ))),
-        })
+        let size = (args.size.0.max(0) as u32, args.size.1.max(0) as u32);
+        let surface = if args.depth_buffer.unwrap_or(false) {
+            starfish::pygame::render::Surface::with_depth(size)
+        } else {
+            SfSurface::new(size)
+        };
+        Ok(Self { surface: std::sync::Arc::new(surface) })
     }
 }
 
@@ -410,6 +615,21 @@ impl PySurface {
             surface: self.surface.clone(),
         }
         .into_ref(&vm.ctx))
+    }
+
+    /// has_depth() -> bool：是否带深度缓冲（构造期 `depth_buffer=True`
+    /// 定格——`render_depth()` 深度会话的前置）
+    #[pymethod]
+    fn has_depth(&self) -> bool {
+        self.surface.has_depth()
+    }
+
+    /// set_clip(rect | None)：离屏会话裁剪矩形（后续绘制生效）
+    #[pymethod]
+    fn set_clip(&self, rect: Option<SfRect>, _vm: &VirtualMachine) {
+        self.surface.set_clip(rect.map(|r| {
+            starfish::pygame::Rect::new(r.x, r.y, r.w, r.h)
+        }));
     }
 
     #[pymethod]
@@ -430,28 +650,28 @@ impl PySurface {
         self.surface.alpha()
     }
 
-    #[pymethod]
-    fn fill(&self, color: SfColor, vm: &VirtualMachine) -> PyResult<PyRef<PyRect>> {
-        let r = self
-            .surface
-            .fill([color.0[0], color.0[1], color.0[2], color.0[3]]);
-        Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx))
-    }
+    // #[pymethod]
+    // fn fill(&self, color: SfColor, vm: &VirtualMachine) -> PyResult<PyRef<PyRect>> {
+    //     let r = self
+    //         .surface
+    //         .fill([color.0[0], color.0[1], color.0[2], color.0[3]]);
+    //     Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx))
+    // }
 
     /// blit(src, dest) -> Rect：Surface 贴图（self-blit 会 panic——
     /// starfish assert_not_self，文档标注）
-    #[pymethod]
-    fn blit(
-        &self,
-        src: PyRef<PySurface>,
-        dest: SfPoint,
-        vm: &VirtualMachine,
-    ) -> PyResult<PyRef<PyRect>> {
-        let r = self
-            .surface
-            .blit(&src.surface, (dest.0, dest.1));
-        Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx))
-    }
+    // #[pymethod]
+    // fn blit(
+    //     &self,
+    //     src: PyRef<PySurface>,
+    //     dest: SfPoint,
+    //     vm: &VirtualMachine,
+    // ) -> PyResult<PyRef<PyRect>> {
+    //     let r = self
+    //         .surface
+    //         .blit(&src.surface, (dest.0, dest.1));
+    //     Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx))
+    // }
 
     /// get_rect() -> Rect(0, 0, w, h)：尺寸矩形（批次 C 复用）
     #[pymethod]
@@ -485,3 +705,10 @@ impl Representable for PySurface {
         Ok(vm.ctx.new_str(format!("<Surface({}x{})>", w, h)))
     }
 }
+
+// ── 会话相机/裁剪（批次 B：r.set_clip / r.set_camera_*）────────────
+// Screen 会话相机走统一 RenderPass::set_camera（MRT rig 亦同臂）；
+// Surface 离屏会话 v1 只补 set_clip（相机随 3D 内容 v2 开放）。
+// ⚠️ RP 同类型仅允许一个 #[pyclass] impl 块——Session/SurfaceSession
+// 的方法并入 native_pygame 的既有块（本文件只承载"块不在 native"的
+// 类型：PyRect/PySurface/PyKey...）。

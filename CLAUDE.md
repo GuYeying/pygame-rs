@@ -42,8 +42,50 @@ RustPython 解释器 + pygame 绑定面。引擎本体在**同级目录** `../st
   （get_rel/可见态/聚焦态/get_mods/KMOD_*/name + set_pos·set_repeat
   垫底）、**gfxdraw 兼容签名面**（SDL_gfx 惯例：目标会话在前/坐标
   分离/颜色在后——aa* 为兼容别名，实现同一 batch；rounded* 垫底
-  直角）已完成；**cursors 剪除**（2026-09-30 定案：光标图标桌面专属
+  直角）、**with_batch 逃逸舱补全**（vertices/geometry 直通——
+  topo/kind 白名单校验、GLES 退化展开由 push_geometry 承载）、
+  **Color 提升为 class**（批次三十九：PyColor pyclass 直通 starfish
+  Color——r/g/b/a 属性 + normalize/premul_alpha/lerp/grayscale/invert/
+  correct_gamma + Color==tuple 兼容旧契约 + SfColor 直通分支）已完成；
+  **cursors 剪除**（2026-09-30 定案：光标图标桌面专属
   不跨平台，set_cursor_visible 保留于 base）。
+- **批次 34（2026-10-12，Claude 接手后首战）：全体系对接收口**——
+  starfish pygame 层 26 模块绑定面补齐：
+  - **新模块**：mask（Mask 全套：new/set_at/get_at/count/fill/invert/
+    overlap/overlap_area/overlap_mask/scale/to_surface + from_surface
+    ——影子快路径三端同步零回读）；permission（ensure + MICROPHONE/
+    INTERNET 常量；Android MICROPHONE 阻塞授权语义**透传**）；video
+    （VideoSystem/Video：open/update/size/position/ended/音视频开关
+    ——接口面级，呈现集成随引擎纹理桥）；time.Clock（**上限节流**
+    帧时钟，tick 返 ms——vsync 已达标不补睡，三端同语义）；
+  - **render 深水区**：Surface 构造 `depth_buffer=True`（架构 §九.2
+    定约落地——`depth=` bpp 语义禁用）+ `has_depth()`；Session
+    `set_clip`/`set_camera_ortho`/`set_camera_perspective`；Surface
+    会话 `set_clip`；**`pygame.targets([a, b])`** MRT 会话（§3.1 预言
+    形态——引擎侧 `render_targets_arc` 'static 收口 + bridge 目标
+    Arc 保活表，本 crate 外唯一引擎增补）；
+  - **既有补面**：event poll/clear、display set_caption/get_init、
+    io write_text、KMOD_* 常量；
+  - **sprite pyclass 桥**：Sprite = 配置对象（at/tag/z/rotation/scale/
+    alpha/visible 链式 + 多帧动画 set_fps），Group.add 物化配置并
+    **回写世代 id 进 Python 对象**（Copy 纯值跨 GC 零负担）/remove/
+    alive/count/position/move_by/set_*/with_tag/tick/draw（路由活跃
+    会话——单形态定约）；
+  - **探针 selftest 扩至 23 项**（新模块全量），桌面全绿；
+  - **坑（绑定面铁律新增）**：①RP 同类型仅一个 `#[pyclass]` impl
+    块——跨文件第二个 E0119，方法并入既有块；②pymethod 直写
+    `Option<T>` 形参不做缺省（可省参须 FromArgs 结构体
+    `#[pyarg(optional)]`）；③**pymethod panic 穿透 Python 异常层
+    直接带崩进程**（sprite 首版索引空 vec 实测——绑定面禁 panic，
+    索引/unwrap 前自查）；④Constructor Args 用 tuple 无法变参
+    （一参缺省形态须 derive struct）。
+- **批次 34 续：with_batch 直通口**——`blit_area(src, dest, area,
+  color=None)`（push_quad_uv：UV 子区域贴图=pygame blit 的 area 语义）
+  + `quad(texture, corners, uvs, color)`（push_quad_corners：任意四角）
+  三会话同挂（Screen/SurfaceSession/TargetsSession——同类型单 impl 块
+  约束下方法面三处镜像）；args 新增 `SfFPoint/SfFPoints`（f32 宽收，
+  ArgIntoFloat 路径——角点亚像素坐标）；`push_geometry` 暂缓（需
+  Python 侧 Geometry 构建器，随 v2 静态网格立项）。
 - **逐模块独立测试阶段**（进行中）：共享宿主壳 `rpy::testhost::run(
   script, tag)`（set_mode/铺底/CJK 三平台预载/装配/事件泵/帧循环/收口
   固化），每模块一个 `examples/<模块>_test.rs + .py`（[模块-test] 行
@@ -89,13 +131,16 @@ Python 触达 Rust 的分层链（自上而下，单向）：
 ```
 用户 Python 脚本（标准 import pygame）
   → 原生 pygame 模块（src/rpy/native_pygame.rs：#[pymodule] 树
-    display/event/time/key/mouse/gamepad/touch/font/mixer/transform/image/
-    math/sndarray/version/io/net/dialog/gfxdraw + Screen/Session/Event/
-    Rect/Key/Pressed/Font/Sound/Surface/Vector2/Vector3/Quaternion/Mat4/
-    TCP/UDP/PickedFile pyclass + K_* 键表 + gamepad BTN_*/AXIS_* 整数
+    display/event/time(+Clock)/key/mouse/gamepad/touch/font/mixer/transform/
+    image/math/sndarray/version/io(+write_text)/net/dialog/gfxdraw/
+    **mask/permission/video**/pygame.targets(MRT 会话) + Screen/Session/
+    Event/Rect/Key/Pressed/Font/Sound/Surface/**Mask/VideoSystem/Video/
+    Clock/Sprite/Group**/Vector2/Vector3/Quaternion/Mat4/TCP/UDP/
+    PickedFile pyclass + K_* 键表 + KMOD_* + gamepad BTN_*/AXIS_* 整数
     常量（标准布局索引）；install_pygame() 注入 sys.modules——
     宿主壳在 interp.enter 内调用，勿放 init_hook；方法实现层拆分在
-    src/rpy/pygame_impls.rs（impl 块与 struct 分离可行，同 crate 内合法）
+    src/rpy/pygame_impls.rs（impl 块与 struct 分离可行，同 crate 内合法；
+    ⚠️ 同类型仅允许一个 #[pyclass] impl 块——跨文件第二个会 E0119）
     → sf_* / args（src/rpy/bridge.rs 引擎桥 + src/rpy/args.rs 收参层：
       draw 族 FromArgs 结构体收参 + 序列整形；bridge 全局 = sig_probe
       契约面）

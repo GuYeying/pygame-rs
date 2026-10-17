@@ -10,6 +10,9 @@
 import pygame
 
 
+print(dir(pygame))
+print(dir(pygame.mask))
+print(dir(pygame.event))
 def game():
     screen = pygame.display.set_mode((800, 600))
     font = pygame.font.Font(None, 40)   # 内嵌默认字体（批次 D：拉丁）
@@ -120,29 +123,111 @@ def game():
     except Exception as _e:
         _st("gfxdraw.circle_box", False)
         print("    [selftest] 异常:", _e)
+    # ── 全体系对接批次（mask/Clock/permission/video/深度面/targets/
+    #  sprite）运行时自测——判定约定同上：帧 1 执行，[selftest] 三端同源 ──
+    # mask：位构造/读写/count/invert/overlap
+    try:
+        _m = pygame.mask.Mask((8, 8))
+        _m.set_at((0, 0)); _m.set_at((1, 1))
+        _st("mask.basic", _m.get_at((0, 0)) and not _m.get_at((2, 2)) and _m.count() == 2)
+        _m.invert()
+        _st("mask.invert", _m.count() == 62)
+        _full = pygame.mask.Mask((8, 8), True)
+        _st("mask.overlap", _full.overlap(_m, (0, 0)) is not None
+            and _full.overlap_area(_m, (0, 0)) == 62)
+    except Exception as _e:
+        _st("mask.basic", False); print("    [selftest] 异常:", _e)
+    # mask.from_surface：影子快路径（表面 alpha 影子）三端同步零回读
+    try:
+        _fs = pygame.Surface((8, 8))
+        _fs.fill((255, 255, 255, 255))   # 不透明面 → 全部置位（全透明面 count=0 是正确语义）
+        _mf = pygame.mask.from_surface(_fs, 127)
+        _st("mask.from_surface", _mf.count() == 64 and _mf.get_size() == (8, 8))
+    except Exception as _e:
+        _st("mask.from_surface", False); print("    [selftest] 异常:", _e)
+    # time.Clock：上限节流帧时钟（tick 返回毫秒）
+    _ck = pygame.time.Clock()
+    _ms = _ck.tick(0)
+    _st("clock.tick", isinstance(_ms, float) and _ms >= 0.0
+        and _ck.get_fps() >= 0.0 and _ck.get_time() >= 0.0)
+    # permission：非阻塞项 INTERNET 三平台直通/委派
+    _st("permission.internet",
+        pygame.permission.ensure(pygame.permission.INTERNET) is True)
+    # video：接口可调（缺失文件错误路径 → ValueError）
+    try:
+        _vs = pygame.video.VideoSystem()
+        _bad = False
+        try:
+            _vs.open("__missing_video__.mp4")
+        except ValueError:
+            _bad = True
+        _st("video.error_path", _bad)
+    except Exception as _e:
+        _st("video.error_path", False); print("    [selftest] 异常:", _e)
+    # surface 深度面：depth_buffer 构造定约（§九.2——depth= 禁用）
+    _sd = pygame.Surface((32, 32), depth_buffer=True)
+    _sp = pygame.Surface((32, 32))
+    _st("surface.depth", _sd.has_depth() and not _sp.has_depth())
+    # targets：MRT 会话（一次 pass 镜像双写，不抛错 = 接口通）
+    try:
+        _ta = pygame.Surface((64, 64)); _tb = pygame.Surface((64, 64))
+        with pygame.targets([_ta, _tb]) as t:
+            t.fill((60, 20, 80))
+            t.rect((255, 255, 255), (8, 8, 48, 48), 2)
+        _st("targets.mrt", True)
+    except Exception as _e:
+        _st("targets.mrt", False); print("    [selftest] 异常:", _e)
+    # sprite：配置 → add（世代 id 回写）→ move/position → remove 生命周期
+    try:
+        _gs = pygame.Surface((16, 16))
+        _grp = pygame.sprite.Group()
+        _sp1 = pygame.sprite.Sprite(_gs).at(10, 20).tag("enemy")
+        _grp.add(_sp1)
+        _grp.move_by(_sp1, 5, 0)
+        _ok = (_grp.count() == 1 and _grp.alive(_sp1)
+               and _grp.position(_sp1) == (15, 20))
+        _ok = _ok and _grp.remove(_sp1) and not _grp.alive(_sp1) and _grp.count() == 0
+        _st("sprite.lifecycle", _ok)
+    except Exception as _e:
+        _st("sprite.lifecycle", False); print("    [selftest] 异常:", _e)
+    # with_batch 直通口：blit_area（UV 子区域）+ quad（任意四角）
+    try:
+        _ba = pygame.Surface((32, 16)); _ba.fill((90, 200, 255))
+        with screen.render() as r:
+            r.blit_area(_ba, (100, 500), (0, 0, 16, 16))          # 源左上 16×16 子区域
+            r.quad(_ba, [(600, 480), (660, 490), (650, 540), (590, 530)],
+                   [(0, 0), (1, 0), (1, 1), (0, 1)], (255, 255, 255))
+        _st("withbatch.direct", True)
+    except Exception as _e:
+        _st("withbatch.direct", False); print("    [selftest] 异常:", _e)
+    # event poll/clear + KMOD 常量
+    _pe = pygame.event.poll()
+    _st("event.poll", _pe is None or hasattr(_pe, "type"))
+    pygame.event.clear()
+    _st("kmod.const", pygame.key.KMOD_SHIFT == 1 and pygame.key.KMOD_ALT == 4)
     print("[selftest] 汇总:", "全部通过" if not _st_fail
           else "失败项 " + repr(_st_fail))
 
     x = 370
     while True:
         for e in pygame.event.get():
-            if e.type == pygame.QUIT:
+            if e.type == pygame.event.QUIT:
                 return
             # 仅 Web 会进入（原生平台 snd 已就绪，None 守卫恒假）：
             # 首次按键/点击 = 用户手势，AudioContext 解锁点
-            if e.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN) and snd is None:
+            if e.type in (pygame.event.KEYDOWN, pygame.event.MOUSEBUTTONDOWN) and snd is None:
                 snd = pygame.mixer.Sound()
                 snd.play(-1)
                 print("[diag] Web 手势解锁：提示音开始循环播放 len =",
                       snd.get_length(), "busy =", pygame.mixer.get_busy())
             # touch 诊断（批次 I）：移动端点按/滑动可看手指表联动
             # （桌面恒 0——引擎仅移动端产生 Touch 事件）
-            if e.type == pygame.MOUSEBUTTONDOWN:
+            if e.type == pygame.event.MOUSEBUTTONDOWN:
                 print("[diag] tap: touch 手指数 =", pygame.touch.get_count())
-            if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+            if e.type == pygame.event.KEYDOWN and e.key == pygame.event.K_ESCAPE:
                 return
 
-        screen.fill((30, 30, 46))
+        
         box = pygame.Rect(x, 270, 60, 60)   # Rect 直通句柄（批次 C）：实例直接当 draw 参数
         # ── 批次 K 数学驱动视觉自证（图元承载，零新建 GPU 表面——
         #  ADR-5 延迟提交红线）：四元数旋转的手 + lerp 脉冲圆 ──
@@ -154,9 +239,10 @@ def game():
         _pulse = pygame.math.Vector3(0.5, 0.5, 0.5).lerp(
             pygame.math.Vector3(1.6, 1.6, 1.6), 1 - abs(_t01 * 2 - 1))
         with screen.render() as r:
+            r.fill((30, 30, 46))
             # 核心查询活体证明：key.get_pressed / mouse.get_pressed 链路
             # （Space 按住 → 描边变红；左键按住 → 方块上出现标记点）
-            _space = pygame.key.get_pressed().get(pygame.K_SPACE)
+            _space = pygame.key.get_pressed().get(pygame.key.K_SPACE)
             _lmb = pygame.mouse.get_pressed()[0]
             r.rect((255, 80, 80) if _space else (255, 255, 255), (x, 430, 60, 60), 4)
             if _lmb:

@@ -19,18 +19,22 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use rustpython_vm::builtins::PyBaseExceptionRef;
+use rustpython_vm::convert::TryFromObject;
 use rustpython_vm::scope::Scope;
 use rustpython_vm::{PyObjectRef, PyResult, VirtualMachine};
 
 use crate::rpy::args::{
-    DrawArcArgs, DrawCircleArgs, DrawEllipseArgs, DrawLineArgs, DrawPolygonArgs, DrawRectArgs,
-    FillArgs, SfColor,
+    BlitAreaArgs, DrawArcArgs, DrawCircleArgs, DrawEllipseArgs, DrawLineArgs, DrawPolygonArgs,
+    DrawRectArgs, FillArgs, QuadCornersArgs, SfColor, SfPoint, SfRect, GeometryArgs,
+    VerticesArgs,
 };
 
 use starfish::base::audio::{AudioMixer, SoundData};
+use starfish::base::gfx::{Geometry, ShapeVertex};
 use starfish::base::window::KeyCode;
 use starfish::pygame::color::Color;
 use starfish::pygame::rect::Rect;
+use starfish::pygame::render::{BatchTopology, GeometryKind, SpriteVertex};
 use starfish::pygame::render::RenderPass;
 use starfish::pygame::{display, draw, time};
 use starfish::pygame::Event;
@@ -175,6 +179,16 @@ pub(crate) fn drain_events() -> Vec<Event> {
     EVENTS.with(|q| q.borrow_mut().drain(..).collect())
 }
 
+/// 单发弹出队首事件（pygame `event.poll()` 语义——其余事件留在队列）。
+pub(crate) fn poll_event() -> Option<Event> {
+    EVENTS.with(|q| q.borrow_mut().pop_front())
+}
+
+/// 清空事件队列（pygame `event.clear()` 语义）。
+pub(crate) fn clear_events() {
+    EVENTS.with(|q| q.borrow_mut().clear());
+}
+
 // ── 渲染会话（ADR-5 with 语法）─────────────────────────────────
 
 /// 会话开启（原生 `Screen.render()` 进入点）：
@@ -192,6 +206,48 @@ pub(crate) fn session_end() {
             pass.finish();
         }
     });
+}
+
+// ── MRT 会话（pygame.targets：一次 pass 镜像写 N≥2 目标）────────
+
+thread_local! {
+    /// MRT 会话真身（与 Screen SESSION 并行——MRT 块内不嵌套 Screen 会话
+    /// 由调用方约定；目标 Arc 由 KEEPALIVE 保活至 mrt_end）
+    static MRT_SESSION: RefCell<Option<RenderPass<'static>>> = const { RefCell::new(None) };
+    /// 目标保活表（render_targets_arc 的生命周期证据）
+    static MRT_KEEPALIVE: RefCell<Vec<std::sync::Arc<starfish::pygame::render::Surface>>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// MRT 会话开启（`pygame.targets([...])` 进入点）：Arc 保活 + 'static 化。
+pub(crate) fn mrt_begin(targets: &[std::sync::Arc<starfish::pygame::render::Surface>]) {
+    let pass = starfish::pygame::render::render_targets_arc(targets);
+    MRT_KEEPALIVE.with(|k| *k.borrow_mut() = targets.to_vec());
+    MRT_SESSION.with(|s| *s.borrow_mut() = Some(pass));
+}
+
+/// MRT 会话结束（`__exit__`）：finish + 清保活表（顺序不可换——finish
+/// 内部仍触碰目标）。
+pub(crate) fn mrt_end() {
+    MRT_SESSION.with(|s| {
+        if let Some(pass) = s.borrow_mut().take() {
+            pass.finish();
+        }
+    });
+    MRT_KEEPALIVE.with(|k| k.borrow_mut().clear());
+}
+
+/// MRT 会话内绘制路由（DrawTarget 全家经此进入；无活跃 MRT 会话报错）。
+pub(crate) fn with_mrt_session<T>(
+    vm: &VirtualMachine,
+    f: impl FnOnce(&RenderPass<'static>) -> T,
+) -> PyResult<T> {
+    MRT_SESSION.with(|s| match s.borrow().as_ref() {
+        Some(pass) => Ok(f(pass)),
+        None => Err(vm.new_value_error(
+            "无活跃 MRT 会话（须在 `with pygame.targets([...])` 块内调用）",
+        )),
+    })
 }
 
 /// 会话内 blit（原生 `Session.text` 的真身：font.render 的 Surface 贴入
@@ -224,6 +280,174 @@ pub(crate) fn with_session<T>(
 // 原生 pygame 模块的 Session pymethod + 本文件的全局注册面。
 
 /// [`SfColor`] → starfish [`Color`]（绘制原语/离屏会话共用）。
+// ── with_batch 直通口（低层几何：UV 子区域贴图 / 任意四角）────────
+
+use starfish::pygame::render::DrawTarget as BdTarget;
+
+/// blit_area 主体：UV 子区域四边形进目标 batch（三会话共用；src 须为
+/// PySurface，area 为源面像素坐标子区域，color 缺省白 = 原样）。
+pub(crate) fn blit_area<T: BdTarget>(
+    target: &T,
+    src_obj: &PyObjectRef,
+    dest: SfPoint,
+    area: SfRect,
+    color: Option<SfColor>,
+    vm: &VirtualMachine,
+) -> PyResult<starfish::pygame::Rect> {
+    let src = src_obj
+        .downcast_ref::<crate::rpy::native_pygame::PySurface>()
+        .ok_or_else(|| vm.new_type_error("src 须为 pygame.Surface 实例"))?;
+    let (sw, sh) = src.size();
+    if area.w <= 0 || area.h <= 0 || sw == 0 || sh == 0 {
+        return Err(vm.new_value_error("area 尺寸须为正且源面非空"));
+    }
+    // 源面像素坐标 → 归一 UV
+    let uv = [
+        area.x as f32 / sw as f32,
+        area.y as f32 / sh as f32,
+        (area.x + area.w) as f32 / sw as f32,
+        (area.y + area.h) as f32 / sh as f32,
+    ];
+    let raw = color.map(|c| c.0).unwrap_or([255, 255, 255, 255]);
+    let tint = [
+        raw[0] as f32 / 255.0,
+        raw[1] as f32 / 255.0,
+        raw[2] as f32 / 255.0,
+        raw[3] as f32 / 255.0,
+    ];
+    target.with_batch(|b| {
+        b.push_quad_uv(
+            dest.0 as f32,
+            dest.1 as f32,
+            area.w as f32,
+            area.h as f32,
+            uv,
+            tint,
+            Some(src.surface.texture()),
+        )
+    });
+    Ok(starfish::pygame::Rect::new(dest.0, dest.1, area.w, area.h))
+}
+
+/// vertices 主体：原始顶点入目标 batch（逃逸舱——topo
+/// "triangles"/"lines"；points = [(x, y), ...]（z=0、uv 中心、统一色）；
+/// 纯色路径，贴图变体随需再加）。
+pub(crate) fn vertices<T: BdTarget>(
+    target: &T,
+    args: &crate::rpy::args::VerticesArgs,
+    vm: &VirtualMachine,
+) -> PyResult<()> {
+    let topo = match args.topo.as_str() {
+        "triangles" => starfish::pygame::render::BatchTopology::Triangles,
+        "lines" => starfish::pygame::render::BatchTopology::Lines,
+        other => {
+            return Err(vm.new_value_error(format!(
+                "topo 须为 'triangles' 或 'lines'：{other:?}"
+            )))
+        }
+    };
+    let raw = args.color.map(|c| c.0).unwrap_or([255, 255, 255, 255]);
+    let tint = [
+        raw[0] as f32 / 255.0,
+        raw[1] as f32 / 255.0,
+        raw[2] as f32 / 255.0,
+        raw[3] as f32 / 255.0,
+    ];
+    let verts: Vec<starfish::pygame::render::SpriteVertex> = args
+        .points
+        .0
+        .iter()
+        .map(|(x, y)| starfish::pygame::render::SpriteVertex {
+            pos: [*x as f32, *y as f32, 0.0],
+            uv: [0.5, 0.5],
+            color: tint,
+        })
+        .collect();
+    target.with_batch(|b| {
+        b.push_vertices(topo, None, &verts);
+    });
+    Ok(())
+}
+
+/// geometry 主体：索引几何入目标 batch（kind "filled"/"line"——
+/// push_geometry 内做 GLES 兼容的退化四边形展开；points = [(x, y), ...]
+/// z=0；indices 空 = 逐 3 顶点一切三角）。
+pub(crate) fn geometry<T: BdTarget>(
+    target: &T,
+    args: &crate::rpy::args::GeometryArgs,
+    vm: &VirtualMachine,
+) -> PyResult<()> {
+    let kind = match args.kind.as_str() {
+        "filled" => starfish::pygame::render::GeometryKind::Filled,
+        "line" => starfish::pygame::render::GeometryKind::Line,
+        other => {
+            return Err(vm.new_value_error(format!(
+                "kind 须为 'filled' 或 'line'：{other:?}"
+            )))
+        }
+    };
+    let raw = args.color.map(|c| c.0).unwrap_or([255, 255, 255, 255]);
+    let tint = [
+        raw[0] as f32 / 255.0,
+        raw[1] as f32 / 255.0,
+        raw[2] as f32 / 255.0,
+        raw[3] as f32 / 255.0,
+    ];
+    let verts: Vec<starfish::base::gfx::ShapeVertex> = args
+        .points
+        .0
+        .iter()
+        .map(|(x, y)| starfish::base::gfx::ShapeVertex::new([*x as f32, *y as f32, 0.0], tint))
+        .collect();
+    let indices: Vec<u16> = match &args.indices {
+        Some(o) => vm.extract_elements_with(o, |v| u16::try_from_object(vm, v.clone()))?,
+        None => Vec::new(),
+    };
+    let geom = starfish::base::gfx::Geometry::indexed(verts, indices);
+    target.with_batch(|b| b.push_geometry(kind, &geom, [0.0, 0.0], tint));
+    Ok(())
+}
+
+/// quad_corners 主体：任意四角贴图进目标 batch（corners/uvs 各 4 组，
+/// uv 归一 0..1；顺序 TL/TR/BR/BL）。
+pub(crate) fn quad_corners<T: BdTarget>(
+    target: &T,
+    args: QuadCornersArgs,
+    vm: &VirtualMachine,
+) -> PyResult<()> {
+    let src = args
+        .texture
+        .downcast_ref::<crate::rpy::native_pygame::PySurface>()
+        .ok_or_else(|| vm.new_type_error("texture 须为 pygame.Surface 实例"))?;
+    if args.corners.0.len() != 4 || args.uvs.0.len() != 4 {
+        return Err(vm.new_value_error(format!(
+            "corners/uvs 各须 4 组点，实际 {}/{}",
+            args.corners.0.len(),
+            args.uvs.0.len()
+        )));
+    }
+    let pt = |p: [(f32, f32); 4]| -> [[f32; 2]; 4] {
+        [p[0].into(), p[1].into(), p[2].into(), p[3].into()]
+    };
+    let corners = pt(args.corners.0.try_into().unwrap());
+    let uvs = pt(args.uvs.0.try_into().unwrap());
+    let c = color_of(args.color);
+    target.with_batch(|b| {
+        b.push_quad_corners(
+            corners,
+            uvs,
+            [
+                c.r as f32 / 255.0,
+                c.g as f32 / 255.0,
+                c.b as f32 / 255.0,
+                c.a as f32 / 255.0,
+            ],
+            Some(src.surface.texture()),
+        )
+    });
+    Ok(())
+}
+
 pub(crate) fn color_of(c: SfColor) -> Color {
     Color::new(c.0[0], c.0[1], c.0[2], c.0[3])
 }

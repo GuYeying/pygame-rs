@@ -28,7 +28,9 @@ use rustpython_derive::pymodule;
 use rustpython_vm::VirtualMachine;
 
 // 转出给 args 层（SfRect 直通）与 pygame_impls（方法实现层）
+pub(crate) use pygame::PyColor;
 pub(crate) use pygame::PyRect;
+pub(crate) use pygame::PySurface;
 pub(crate) use pygame::mixer::PySound;
 
 /// 多阶段 init 后注入 sys.modules（`import pygame` 的直达路径）。
@@ -73,6 +75,9 @@ fn try_install(vm: &VirtualMachine, def: &'static rustpython_vm::builtins::PyMod
         ("mixer", "pygame.mixer"),
         ("transform", "pygame.transform"),
         ("image", "pygame.image"),
+        ("mask", "pygame.mask"),
+        ("permission", "pygame.permission"),
+        ("video", "pygame.video"),
     ] {
         let child = module
             .get_attr(attr, vm)
@@ -90,22 +95,27 @@ pub(crate) mod pygame {
     use std::cell::Cell;
     use rustpython_vm::function::{FuncArgs, PyComparisonValue};
     use rustpython_vm::types::{Comparable, PyComparisonOp, Representable};
-    use rustpython_vm::convert::TryFromObject;
     use rustpython_vm::{
-        Py, PyObject, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
+        PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
         builtins::{PyModule, PyStr, PyStrRef},
     };
-    use starfish::base::window::KeyCode;
-    use starfish::pygame::Event as EngineEvent;
     use starfish::pygame::Rect as EngineRect;
     use starfish::pygame::render::{DrawTarget, Surface as SfSurface};
-    use starfish::pygame::transform as sf_transform;
-    use starfish::pygame::image as sf_image;
     use crate::rpy::{bridge, args};
     use crate::rpy::args::SfColor;
 
     /// Session 绘制方法的 Rect 形参别名（args::SfRect 的直通分支消费方）
     type PyRectRef = PyRef<PyRect>;
+
+    // ── 默认字体（顶层常量——维护者/开发者自定义入口）──────────────
+    // 内嵌 Antonio-Regular 47KB（拉丁，OFL 许可，跨仓库 include_bytes 单源）。
+    // 开发者可整体替换此路径换默认字体：如英语使用者不依赖 CJK 预载链，
+    // 将 include_bytes 指向自有拉丁字体即可（减体积/去字体文件依赖）。
+    // 注：CJK 中文走宿主 io 预载（msyh/cjk.ttf/系统候选链），与此常量无关。
+    pub(crate) const DEFAULT_FONT: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../starfish/resources/fonts/Antonio-Regular.ttf"
+    ));
 
     // ── Surface：starfish Surface 直通句柄（批次 F）─────────────────
     // payload = owned starfish Surface（无 Clone/Debug/生命周期参数；
@@ -157,7 +167,6 @@ pub(crate) mod pygame {
         /// 会话收口：flush 内部 batch 上 GPU（无 present——离屏）
         #[pymethod]
         fn __exit__(&self, _exc_info: FuncArgs, vm: &VirtualMachine) -> bool {
-            use starfish::pygame::render::DrawTarget;
             self.surface.flush();
             let _ = vm;
             false
@@ -252,6 +261,36 @@ pub(crate) mod pygame {
             Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx).into())
         }
 
+        /// blit_area(src, dest, area, color=None) -> Rect：UV 子区域贴图
+        /// （with_batch push_quad_uv 直通——源面像素坐标子区域一次四边形）
+        #[pymethod]
+        fn blit_area(&self, args: args::BlitAreaArgs, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let r = bridge::blit_area(&*self.surface, &args.src, args.dest, args.area, args.color, vm)?;
+            Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx).into())
+        }
+
+        /// quad(texture, corners, uvs, color)：任意四角贴图（with_batch
+        /// push_quad_corners 直通——角点/uv 各 4 组，uv 归一 0..1）
+        #[pymethod]
+        fn quad(&self, args: args::QuadCornersArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::quad_corners(&*self.surface, args, vm)
+        }
+
+        /// vertices(topo, points, color)：原始顶点入批（逃逸舱——topo
+        /// "triangles"/"lines"；points = [(x, y), ...]；z=0、uv 中心、统一色）
+        #[pymethod]
+        fn vertices(&self, args: args::VerticesArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::vertices(&*self.surface, &args, vm)
+        }
+
+        /// geometry(kind, points, indices, color)：索引几何入批
+        ///（kind "filled"/"line"；indices 空 = 逐 3 顶点一切三角；
+        /// push_geometry 内做 GLES 兼容退化四边形展开）
+        #[pymethod]
+        fn geometry(&self, args: args::GeometryArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::geometry(&*self.surface, &args, vm)
+        }
+
         /// text(font, text, dest, color) -> Rect：会话内直接绘制文字
         /// （目标 = 本 Surface；font.render + blit 融合，批次 F+）
         #[pymethod]
@@ -276,131 +315,8 @@ pub(crate) mod pygame {
         }
     }
 
-    /// K_* 全表（starfish locals::key 的 108 键，typed KeyCode；
-    /// SHIFT/CTRL/ALT/META 为左键别名）。exec 时注册为 pygame 顶层常量
-    /// （真 pygame 惯例：K_* 在顶层而非 key 子模块）。
-    pub(crate) const KEY_TABLE: &[(&str, KeyCode)] = &[
-        // 字母
-        ("K_a", KeyCode::KeyA), ("K_b", KeyCode::KeyB), ("K_c", KeyCode::KeyC),
-        ("K_d", KeyCode::KeyD), ("K_e", KeyCode::KeyE), ("K_f", KeyCode::KeyF),
-        ("K_g", KeyCode::KeyG), ("K_h", KeyCode::KeyH), ("K_i", KeyCode::KeyI),
-        ("K_j", KeyCode::KeyJ), ("K_k", KeyCode::KeyK), ("K_l", KeyCode::KeyL),
-        ("K_m", KeyCode::KeyM), ("K_n", KeyCode::KeyN), ("K_o", KeyCode::KeyO),
-        ("K_p", KeyCode::KeyP), ("K_q", KeyCode::KeyQ), ("K_r", KeyCode::KeyR),
-        ("K_s", KeyCode::KeyS), ("K_t", KeyCode::KeyT), ("K_u", KeyCode::KeyU),
-        ("K_v", KeyCode::KeyV), ("K_w", KeyCode::KeyW), ("K_x", KeyCode::KeyX),
-        ("K_y", KeyCode::KeyY), ("K_z", KeyCode::KeyZ),
-        // 数字行
-        ("K_0", KeyCode::Digit0), ("K_1", KeyCode::Digit1), ("K_2", KeyCode::Digit2),
-        ("K_3", KeyCode::Digit3), ("K_4", KeyCode::Digit4), ("K_5", KeyCode::Digit5),
-        ("K_6", KeyCode::Digit6), ("K_7", KeyCode::Digit7), ("K_8", KeyCode::Digit8),
-        ("K_9", KeyCode::Digit9),
-        // 功能键
-        ("K_F1", KeyCode::F1), ("K_F2", KeyCode::F2), ("K_F3", KeyCode::F3),
-        ("K_F4", KeyCode::F4), ("K_F5", KeyCode::F5), ("K_F6", KeyCode::F6),
-        ("K_F7", KeyCode::F7), ("K_F8", KeyCode::F8), ("K_F9", KeyCode::F9),
-        ("K_F10", KeyCode::F10), ("K_F11", KeyCode::F11), ("K_F12", KeyCode::F12),
-        // 控制键
-        ("K_ESCAPE", KeyCode::Escape), ("K_TAB", KeyCode::Tab),
-        ("K_CAPSLOCK", KeyCode::CapsLock), ("K_SPACE", KeyCode::Space),
-        ("K_RETURN", KeyCode::Enter), ("K_BACKSPACE", KeyCode::Backspace),
-        ("K_DELETE", KeyCode::Delete), ("K_INSERT", KeyCode::Insert),
-        // 修饰键（左键别名组）
-        ("K_SHIFT", KeyCode::ShiftLeft), ("K_LSHIFT", KeyCode::ShiftLeft),
-        ("K_RSHIFT", KeyCode::ShiftRight),
-        ("K_CTRL", KeyCode::ControlLeft), ("K_LCTRL", KeyCode::ControlLeft),
-        ("K_RCTRL", KeyCode::ControlRight),
-        ("K_ALT", KeyCode::AltLeft), ("K_LALT", KeyCode::AltLeft),
-        ("K_RALT", KeyCode::AltRight),
-        ("K_META", KeyCode::MetaLeft), ("K_LMETA", KeyCode::MetaLeft),
-        ("K_RMETA", KeyCode::MetaRight),
-        ("K_MENU", KeyCode::ContextMenu),
-        // 方向 / 翻页
-        ("K_UP", KeyCode::ArrowUp), ("K_DOWN", KeyCode::ArrowDown),
-        ("K_LEFT", KeyCode::ArrowLeft), ("K_RIGHT", KeyCode::ArrowRight),
-        ("K_HOME", KeyCode::Home), ("K_END", KeyCode::End),
-        ("K_PAGEUP", KeyCode::PageUp), ("K_PAGEDOWN", KeyCode::PageDown),
-        // 符号
-        ("K_MINUS", KeyCode::Minus), ("K_EQUALS", KeyCode::Equal),
-        ("K_LEFTBRACKET", KeyCode::BracketLeft), ("K_RIGHTBRACKET", KeyCode::BracketRight),
-        ("K_BACKSLASH", KeyCode::Backslash), ("K_SEMICOLON", KeyCode::Semicolon),
-        ("K_QUOTE", KeyCode::Quote), ("K_BACKQUOTE", KeyCode::Backquote),
-        ("K_COMMA", KeyCode::Comma), ("K_PERIOD", KeyCode::Period),
-        ("K_SLASH", KeyCode::Slash),
-        // 小键盘
-        ("K_KP0", KeyCode::Numpad0), ("K_KP1", KeyCode::Numpad1),
-        ("K_KP2", KeyCode::Numpad2), ("K_KP3", KeyCode::Numpad3),
-        ("K_KP4", KeyCode::Numpad4), ("K_KP5", KeyCode::Numpad5),
-        ("K_KP6", KeyCode::Numpad6), ("K_KP7", KeyCode::Numpad7),
-        ("K_KP8", KeyCode::Numpad8), ("K_KP9", KeyCode::Numpad9),
-        ("K_KP_PLUS", KeyCode::NumpadAdd), ("K_KP_MINUS", KeyCode::NumpadSubtract),
-        ("K_KP_MULTIPLY", KeyCode::NumpadMultiply), ("K_KP_DIVIDE", KeyCode::NumpadDivide),
-        ("K_KP_ENTER", KeyCode::NumpadEnter), ("K_KP_PERIOD", KeyCode::NumpadDecimal),
-        // 其他
-        ("K_PRINT", KeyCode::PrintScreen), ("K_SCROLLLOCK", KeyCode::ScrollLock),
-        ("K_PAUSE", KeyCode::Pause), ("K_NUMLOCK", KeyCode::NumLock),
-    ];
 
-    /// 用户版 module_exec：先补挂子模块（自动版被用户 exec 顶替），再注册
-    /// K_* typed 常量到 pygame 顶层。
-    fn module_exec(vm: &VirtualMachine, module: &Py<PyModule>) -> PyResult<()> {
-        __init_attributes(vm, module);
-        for (name, kc) in KEY_TABLE {
-            module.set_attr(*name, PyKey(*kc).into_pyobject(vm), vm)?;
-        }
-        Ok(())
-    }
 
-    // ── 常量（tag/键值定约与 bridge.rs 事件映射一致）──
-    #[pyattr]
-    pub(crate) const QUIT: &str = "quit";
-    #[pyattr]
-    pub(crate) const KEYDOWN: &str = "keydown";
-    #[pyattr]
-    pub(crate) const KEYUP: &str = "keyup";
-    #[pyattr]
-    pub(crate) const MOUSEMOTION: &str = "mousemotion";
-    #[pyattr]
-    pub(crate) const MOUSEBUTTONDOWN: &str = "mousebuttondown";
-    #[pyattr]
-    pub(crate) const MOUSEBUTTONUP: &str = "mousebuttonup";
-    #[pyattr]
-    pub(crate) const TEXTINPUT: &str = "textinput";
-    // ── 窗口旗标（locals::display 透传；set_mode 当前收下不解析，前向兼容）──
-    #[pyattr]
-    pub(crate) const RESIZABLE: u32 = starfish::pygame::locals::display::RESIZABLE;
-    #[pyattr]
-    pub(crate) const FULLSCREEN: u32 = starfish::pygame::locals::display::FULLSCREEN;
-    #[pyattr]
-    pub(crate) const NOFRAME: u32 = starfish::pygame::locals::display::NOFRAME;
-    #[pyattr]
-    pub(crate) const HIDDEN: u32 = starfish::pygame::locals::display::HIDDEN;
-    #[pyattr]
-    pub(crate) const ALWAYS_ON_TOP: u32 = starfish::pygame::locals::display::ALWAYS_ON_TOP;
-    #[pyattr]
-    pub(crate) const TRANSPARENT: u32 = starfish::pygame::locals::display::TRANSPARENT;
-    #[pyattr]
-    pub(crate) const VULKAN: u32 = starfish::pygame::locals::display::VULKAN;
-    #[pyattr]
-    pub(crate) const DIRECTX: u32 = starfish::pygame::locals::display::DIRECTX;
-    #[pyattr]
-    pub(crate) const METAL: u32 = starfish::pygame::locals::display::METAL;
-    #[pyattr]
-    pub(crate) const OPENGLES: u32 = starfish::pygame::locals::display::OPENGLES;
-
-    /// pygame.Color：归一 4 元 tuple（(r,g,b) 补 alpha=255；整形复用
-    /// args::SfColor 单一实现）。
-    #[allow(non_snake_case)]
-    #[pyfunction]
-    fn Color(args: FuncArgs, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-        let raw = if args.args.len() == 1 {
-            args.args[0].clone()
-        } else {
-            vm.new_tuple(args.args.clone()).into()
-        };
-        let SfColor(rgba) = SfColor::try_from_object(vm, raw)?;
-        Ok(vm.new_tuple((rgba[0], rgba[1], rgba[2], rgba[3])).into())
-    }
 
     /// 经典全量语义占位：引擎初始化由宿主壳完成，返回 (0, 0)。
     #[pyfunction]
@@ -422,9 +338,9 @@ pub(crate) mod pygame {
     impl PyScreen {
         /// ADR-5 with 会话入口：进入 = 开启 RenderPass，退出 = finish 打包。
         #[pymethod]
-        fn render(&self, vm: &VirtualMachine) -> PyResult<PyRef<PySession>> {
+        fn render(&self, vm: &VirtualMachine) -> PyResult<PyRef<PyScreenSession>> {
             bridge::session_begin();
-            Ok(PySession.into_ref(&vm.ctx))
+            Ok(PyScreenSession.into_ref(&vm.ctx))
         }
 
         /// 深度会话（v1.1：Surface 创建整合 depth_buffer 后启用，架构 §九）。
@@ -433,11 +349,11 @@ pub(crate) mod pygame {
             Err(vm.new_not_implemented_error("render_depth 随 Surface 批次（v1.1）落地"))
         }
 
-        /// 全局屏填充（真身 bridge::sf_draw_fill——批次 A 签名）。
-        #[pymethod]
-        fn fill(&self, args: FillArgs, vm: &VirtualMachine) -> PyResult<()> {
-            bridge::sf_draw_fill(args, vm)
-        }
+        // /// 全局屏填充（真身 bridge::sf_draw_fill——批次 A 签名）。
+        // #[pymethod]
+        // fn fill(&self, args: FillArgs, vm: &VirtualMachine) -> PyResult<()> {
+        //     bridge::sf_draw_fill(args, vm)
+        // }
     }
 
     // ── Session：绘制会话——唯一绘制入口（无 pygame.draw.*(screen, ...)
@@ -448,10 +364,10 @@ pub(crate) mod pygame {
     //    fill(color) ──
     #[derive(Debug, PyPayload)]
     #[pyclass(no_attr, module = false, name = "Session", unhashable = true)]
-    pub(crate) struct PySession;
+    pub(crate) struct PyScreenSession;
 
     #[pyclass]
-    impl PySession {
+    impl PyScreenSession {
         #[pymethod]
         fn __enter__(zelf: PyRef<Self>) -> PyRef<Self> {
             zelf
@@ -506,6 +422,39 @@ pub(crate) mod pygame {
             Ok(PyRect(Cell::new(rect)).into_ref(&vm.ctx).into())
         }
 
+        /// blit_area(src, dest, area, color=None) -> Rect：UV 子区域贴图
+        /// （with_batch push_quad_uv 直通——源面像素坐标子区域一次四边形）
+        #[pymethod]
+        fn blit_area(&self, args: args::BlitAreaArgs, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let r = bridge::with_session(vm, |p| {
+                bridge::blit_area(p, &args.src, args.dest, args.area, args.color, vm)
+            })??;
+            Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx).into())
+        }
+
+        /// quad(texture, corners, uvs, color)：任意四角贴图（with_batch
+        /// push_quad_corners 直通——角点/uv 各 4 组，uv 归一 0..1）
+        #[pymethod]
+        fn quad(&self, args: args::QuadCornersArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_session(vm, |p| bridge::quad_corners(p, args, vm))?;
+            Ok(())
+        }
+
+        /// vertices(topo, points, color)：原始顶点入批（逃逸舱——topo
+        /// "triangles"/"lines"；points = [(x, y), ...]；z=0、uv 中心、统一色）
+        #[pymethod]
+        fn vertices(&self, args: args::VerticesArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_session(vm, |p| bridge::vertices(p, &args, vm))?
+        }
+
+        /// geometry(kind, points, indices, color)：索引几何入批
+        ///（kind "filled"/"line"；indices 空 = 逐 3 顶点一切三角；
+        /// push_geometry 内做 GLES 兼容退化四边形展开）
+        #[pymethod]
+        fn geometry(&self, args: args::GeometryArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_session(vm, |p| bridge::geometry(p, &args, vm))?
+        }
+
         /// text(font, text, dest, color) -> Rect：font.render + 会话 blit
         /// 融合（批次 D）。GPU 需已 init（帧循环内 ✓）；无 background；
         /// 换行符按单行语义跳过；antialias 恒开（starfish 形态）。
@@ -541,161 +490,56 @@ pub(crate) mod pygame {
     #[pyclass(module = "pygame", name = "Rect", unhashable = true)]
     pub(crate) struct PyRect(pub(crate) Cell<EngineRect>);
 
-    // ── Key：类型化键值（K_* 常量的载体；引擎无整数键码表，typed 是
-    //    starfish locals 的既定决策）──
+
+
+    // ── Color：颜色类型（批次三十九，替代旧 fn Color 函数——starfish
+    //    pygame::color::Color 直通句柄；payload = Cell<Color>（Copy，
+    //    Rect 同款模式）。构造/方法在 pygame_impls；SfColor 有 downcast
+    //    分支（Color 实例直接作颜色参数，与 Rect 直通同形态））──
     #[derive(Debug, PyPayload)]
     #[pyattr]
-    #[pyclass(module = "pygame", name = "Key", unhashable = true)]
-    pub(crate) struct PyKey(pub(crate) KeyCode);
+    #[pyclass(module = "pygame", name = "Color", unhashable = true)]
+    pub(crate) struct PyColor(pub(crate) Cell<starfish::pygame::color::Color>);
 
-    // ── Pressed：key.get_pressed() 的按键按下视图 ──
-    // 零尺寸视图不持有（starfish Pressed 无 Debug 不满足 payload 约束），
-    // 查询时实时取视图——状态本体在 key 的 thread-local，语义等价。
-    #[derive(Debug, PyPayload)]
-    #[pyclass(no_attr, module = false, name = "Pressed", unhashable = true)]
-    pub(crate) struct PyPressed;
 
-    #[pyclass]
-    impl PyPressed {
-        #[pymethod]
-        fn get(&self, key: PyRef<PyKey>) -> bool {
-            starfish::pygame::key::get_pressed().get(key.0)
-        }
-    }
 
-    // ── Event：事件对象（pygame.event.get() 产物）。字段形态与 shim 时代
-    //    一致：`type` 为 tag 字符串（QUIT 等常量同源）、`key` 承载键值
-    //    （int）或文本（textinput）；match 类模式解构随 pygame.Event 可用 ──
-    #[derive(Debug, PyPayload)]
-    #[pyattr]
-    #[pyclass(module = "pygame", name = "Event", unhashable = true)]
-    pub(crate) struct PyEvent {
-        pub(crate) typ: PyStrRef,
-        pub(crate) key: PyObjectRef,
-        pub(crate) x: i32,
-        pub(crate) y: i32,
-        pub(crate) button: i32,
-    }
+        
 
-    #[pyclass(with(Representable))]
-    impl PyEvent {
-        #[pygetset(name = "type")]
-        fn typ(&self) -> PyStrRef {
-            self.typ.clone()
-        }
-
-        #[pygetset]
-        fn key(&self) -> PyObjectRef {
-            self.key.clone()
-        }
-
-        #[pygetset]
-        fn x(&self) -> i32 {
-            self.x
-        }
-
-        #[pygetset]
-        fn y(&self) -> i32 {
-            self.y
-        }
-
-        #[pygetset]
-        fn button(&self) -> i32 {
-            self.button
-        }
-    }
-
-    impl Representable for PyEvent {
-        fn repr(zelf: &Py<Self>, vm: &VirtualMachine) -> PyResult<PyRef<PyStr>> {
-            Ok(vm.ctx.new_str(format!(
-                "<Event {} key={} pos=({}, {}) button={}>",
-                zelf.typ,
-                zelf.key.repr(vm)?,
-                zelf.x,
-                zelf.y,
-                zelf.button
-            )))
-        }
-    }
-
-    impl PyEvent {
-        /// 引擎事件 → PyEvent（typed 键值定约，批次 C：`e.key == pygame.K_x`
-        /// 用 Key 实例值相等比较；非键事件的 key 位为 int 0）。
-        pub(crate) fn from_engine(vm: &VirtualMachine, ev: EngineEvent) -> Self {
-            let tag = |s: &str| -> PyStrRef { vm.ctx.intern_str(s).to_owned() };
-            let int_obj = |v: u32| -> PyObjectRef { vm.ctx.new_int(v).into() };
-            let key_obj = |k: KeyCode| -> PyObjectRef { PyKey(k).into_pyobject(vm) };
-            match ev {
-                EngineEvent::Quit => Self {
-                    typ: tag("quit"),
-                    key: int_obj(0),
-                    x: 0,
-                    y: 0,
-                    button: 0,
-                },
-                EngineEvent::KeyDown { key, .. } => Self {
-                    typ: tag("keydown"),
-                    key: key_obj(key),
-                    x: 0,
-                    y: 0,
-                    button: 0,
-                },
-                EngineEvent::KeyUp { key } => Self {
-                    typ: tag("keyup"),
-                    key: key_obj(key),
-                    x: 0,
-                    y: 0,
-                    button: 0,
-                },
-                EngineEvent::MouseMotion { x, y } => Self {
-                    typ: tag("mousemotion"),
-                    key: int_obj(0),
-                    x,
-                    y,
-                    button: 0,
-                },
-                EngineEvent::MouseButtonDown { button, x, y } => Self {
-                    typ: tag("mousebuttondown"),
-                    key: int_obj(0),
-                    x,
-                    y,
-                    button: i32::from(button),
-                },
-                EngineEvent::MouseButtonUp { button, x, y } => Self {
-                    typ: tag("mousebuttonup"),
-                    key: int_obj(0),
-                    x,
-                    y,
-                    button: i32::from(button),
-                },
-                EngineEvent::TextInput { text } => Self {
-                    typ: tag("textinput"),
-                    key: vm.ctx.new_str(text).into(),
-                    x: 0,
-                    y: 0,
-                    button: 0,
-                },
-                _ => Self {
-                    typ: tag("other"),
-                    key: int_obj(0),
-                    x: 0,
-                    y: 0,
-                    button: 0,
-                },
-            }
-        }
-    }
 
     // ── 子模块（必须嵌套声明——父宏只为嵌套 Item::Mod 生成挂载代码）──
-
     #[pymodule]
-    mod display {
+    pub(crate) mod display {
         use super::PyScreen;
         use crate::rpy::bridge;
         use crate::rpy::args::SfPoint;
         use rustpython_derive::FromArgs;
         use rustpython_vm::convert::TryFromObject;
-        use rustpython_vm::{PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
+        use rustpython_vm::{
+            PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
+            builtins::PyStrRef,
+        };
+
+        // ── 窗口旗标（locals::display 透传；set_mode 当前收下不解析，前向兼容）──
+        #[pyattr]
+        pub(crate) const RESIZABLE: u32 = starfish::pygame::display::RESIZABLE;
+        #[pyattr]
+        pub(crate) const FULLSCREEN: u32 = starfish::pygame::display::FULLSCREEN;
+        #[pyattr]
+        pub(crate) const NOFRAME: u32 = starfish::pygame::display::NOFRAME;
+        #[pyattr]
+        pub(crate) const HIDDEN: u32 = starfish::pygame::display::HIDDEN;
+        #[pyattr]
+        pub(crate) const ALWAYS_ON_TOP: u32 = starfish::pygame::display::ALWAYS_ON_TOP;
+        #[pyattr]
+        pub(crate) const TRANSPARENT: u32 = starfish::pygame::display::TRANSPARENT;
+        #[pyattr]
+        pub(crate) const VULKAN: u32 = starfish::pygame::display::VULKAN;
+        #[pyattr]
+        pub(crate) const DIRECTX: u32 = starfish::pygame::display::DIRECTX;
+        #[pyattr]
+        pub(crate) const METAL: u32 = starfish::pygame::display::METAL;
+        #[pyattr]
+        pub(crate) const OPENGLES: u32 = starfish::pygame::display::OPENGLES;
 
         /// set_mode(size, flags=0) → Screen 占位（真身由宿主壳先行装配，
         /// 此处记录需求；flags 批次 O 落地——位集/序列翻译到运行时窗口
@@ -752,13 +596,203 @@ pub(crate) mod pygame {
         fn set_opacity(opacity: f32, _vm: &VirtualMachine) {
             starfish::pygame::display::set_opacity(opacity)
         }
+
+        /// set_caption(title)：窗口标题。
+        #[pyfunction]
+        fn set_caption(title: PyStrRef, vm: &VirtualMachine) -> PyResult<()> {
+            let t = title
+                .to_str()
+                .ok_or_else(|| vm.new_value_error("标题含非 UTF-8 字符"))?;
+            starfish::pygame::display::set_caption(t);
+            Ok(())
+        }
+
+        /// get_init() -> bool：set_mode 是否已调用（display 初始化态）。
+        #[pyfunction]
+        fn get_init(_vm: &VirtualMachine) -> bool {
+            starfish::pygame::display::get_init()
+        }
     }
 
     #[pymodule]
-    mod event {
-        use super::PyEvent;
-        use crate::rpy::bridge;
-        use rustpython_vm::{PyObjectRef, PyPayload, PyResult, VirtualMachine};
+    pub(crate) mod event {
+        use rustpython_vm::builtins::PyModule;
+        use starfish::{base::window::KeyCode};
+        use starfish::pygame::Event as EngineEvent;
+        use rustpython_derive::{pyclass, pymodule};
+        use rustpython_vm::types::{Comparable, PyComparisonOp, Representable};
+        use rustpython_vm::{
+            Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
+            builtins::{PyStr, PyStrRef},
+        };
+        use crate::rpy::{bridge, args};
+
+
+        // ── 常量（tag/键值定约与 bridge.rs 事件映射一致）──
+        #[pyattr]
+        pub(crate) const QUIT: &str = "quit";
+        #[pyattr]
+        pub(crate) const KEYDOWN: &str = "keydown";
+        #[pyattr]
+        pub(crate) const KEYUP: &str = "keyup";
+        #[pyattr]
+        pub(crate) const MOUSEMOTION: &str = "mousemotion";
+        #[pyattr]
+        pub(crate) const MOUSEBUTTONDOWN: &str = "mousebuttondown";
+        #[pyattr]
+        pub(crate) const MOUSEBUTTONUP: &str = "mousebuttonup";
+        #[pyattr]
+        pub(crate) const TEXTINPUT: &str = "textinput";
+
+
+
+        // ── Key：类型化键值（K_* 常量的载体；引擎无整数键码表，typed 是
+        //    starfish locals 的既定决策）──
+        #[derive(Debug, PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame", name = "Key", unhashable = true)]
+        pub(crate) struct PyKey(pub(crate) KeyCode);
+
+        
+        // ── Pressed：key.get_pressed() 的按键按下视图 ──
+        // 零尺寸视图不持有（starfish Pressed 无 Debug 不满足 payload 约束），
+        // 查询时实时取视图——状态本体在 key 的 thread-local，语义等价。
+        #[derive(Debug, PyPayload)]
+        #[pyclass(no_attr, module = false, name = "Pressed", unhashable = true)]
+        pub(crate) struct PyPressed;
+
+        #[pyclass]
+        impl PyPressed {
+            #[pymethod]
+            fn get(&self, key: PyRef<PyKey>) -> bool {
+                starfish::pygame::key::get_pressed().get(key.0)
+            }
+        }
+
+
+
+        // ── Event：事件对象（pygame.event.get() 产物）。字段形态与 shim 时代
+        //    一致：`type` 为 tag 字符串（QUIT 等常量同源）、`key` 承载键值
+        //    （int）或文本（textinput）；match 类模式解构随 pygame.Event 可用 ──
+        #[derive(Debug, PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame", name = "Event", unhashable = true)]
+        pub(crate) struct PyEvent {
+            pub(crate) typ: PyStrRef,
+            pub(crate) key: PyObjectRef,
+            pub(crate) x: i32,
+            pub(crate) y: i32,
+            pub(crate) button: i32,
+        }
+
+        #[pyclass(with(Representable))]
+        impl PyEvent {
+            #[pygetset(name = "type")]
+            fn typ(&self) -> PyStrRef {
+                self.typ.clone()
+            }
+
+            #[pygetset]
+            fn key(&self) -> PyObjectRef {
+                self.key.clone()
+            }
+
+            #[pygetset]
+            fn x(&self) -> i32 {
+                self.x
+            }
+
+            #[pygetset]
+            fn y(&self) -> i32 {
+                self.y
+            }
+
+            #[pygetset]
+            fn button(&self) -> i32 {
+                self.button
+            }
+        }
+
+        impl Representable for PyEvent {
+            fn repr(zelf: &Py<Self>, vm: &VirtualMachine) -> PyResult<PyRef<PyStr>> {
+                Ok(vm.ctx.new_str(format!(
+                    "<Event {} key={} pos=({}, {}) button={}>",
+                    zelf.typ,
+                    zelf.key.repr(vm)?,
+                    zelf.x,
+                    zelf.y,
+                    zelf.button
+                )))
+            }
+        }
+
+        impl PyEvent {
+            /// 引擎事件 → PyEvent（typed 键值定约，批次 C：`e.key == pygame.K_x`
+            /// 用 Key 实例值相等比较；非键事件的 key 位为 int 0）。
+            pub(crate) fn from_engine(vm: &VirtualMachine, ev: EngineEvent) -> Self {
+                let tag = |s: &str| -> PyStrRef { vm.ctx.intern_str(s).to_owned() };
+                let int_obj = |v: u32| -> PyObjectRef { vm.ctx.new_int(v).into() };
+                let key_obj = |k: KeyCode| -> PyObjectRef { PyKey(k).into_pyobject(vm) };
+                match ev {
+                    EngineEvent::Quit => Self {
+                        typ: tag("quit"),
+                        key: int_obj(0),
+                        x: 0,
+                        y: 0,
+                        button: 0,
+                    },
+                    EngineEvent::KeyDown { key, .. } => Self {
+                        typ: tag("keydown"),
+                        key: key_obj(key),
+                        x: 0,
+                        y: 0,
+                        button: 0,
+                    },
+                    EngineEvent::KeyUp { key } => Self {
+                        typ: tag("keyup"),
+                        key: key_obj(key),
+                        x: 0,
+                        y: 0,
+                        button: 0,
+                    },
+                    EngineEvent::MouseMotion { x, y } => Self {
+                        typ: tag("mousemotion"),
+                        key: int_obj(0),
+                        x,
+                        y,
+                        button: 0,
+                    },
+                    EngineEvent::MouseButtonDown { button, x, y } => Self {
+                        typ: tag("mousebuttondown"),
+                        key: int_obj(0),
+                        x,
+                        y,
+                        button: i32::from(button),
+                    },
+                    EngineEvent::MouseButtonUp { button, x, y } => Self {
+                        typ: tag("mousebuttonup"),
+                        key: int_obj(0),
+                        x,
+                        y,
+                        button: i32::from(button),
+                    },
+                    EngineEvent::TextInput { text } => Self {
+                        typ: tag("textinput"),
+                        key: vm.ctx.new_str(text).into(),
+                        x: 0,
+                        y: 0,
+                        button: 0,
+                    },
+                    _ => Self {
+                        typ: tag("other"),
+                        key: int_obj(0),
+                        x: 0,
+                        y: 0,
+                        button: 0,
+                    },
+                }
+            }
+        }
 
         /// 排空事件队列（原生层 pump 每帧灌入；引擎事件 → PyEvent 映射同源）。
         #[pyfunction]
@@ -769,11 +803,29 @@ pub(crate) mod pygame {
                 .collect();
             Ok(vm.ctx.new_list(items).into())
         }
+
+        /// poll() -> Event | None：单发弹出队首（其余事件留在队列——
+        /// 与 get() 的"全量排空"互补）。
+        #[pyfunction]
+        fn poll(vm: &VirtualMachine) -> PyResult<Option<PyObjectRef>> {
+            Ok(bridge::poll_event()
+                .map(|ev| PyEvent::from_engine(vm, ev).into_pyobject(vm)))
+        }
+
+        /// clear()：清空事件队列。
+        #[pyfunction]
+        fn clear(_vm: &VirtualMachine) {
+            bridge::clear_events();
+        }
     }
 
     #[pymodule]
-    mod time {
-        use rustpython_vm::VirtualMachine;
+    pub(crate) mod time {
+        use rustpython_derive::pyclass;
+        use rustpython_vm::types::Constructor;
+        use rustpython_vm::{
+            Py, PyPayload, PyRef, PyResult, VirtualMachine, builtins::PyType,
+        };
 
         #[pyfunction]
         fn get_ticks(_vm: &VirtualMachine) -> u64 {
@@ -784,6 +836,58 @@ pub(crate) mod pygame {
         #[pyfunction]
         fn delay(ms: u64, _vm: &VirtualMachine) {
             starfish::pygame::time::delay(ms);
+        }
+
+        // ── Clock：帧时钟（上限节流语义——详见 pygame/time.rs）────────
+        #[derive(PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame.time", name = "Clock", unhashable = true)]
+        pub(crate) struct PyClock {
+            pub(crate) inner: std::cell::RefCell<starfish::pygame::time::Clock>,
+        }
+
+        impl std::fmt::Debug for PyClock {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("Clock(<frame>)")
+            }
+        }
+
+        #[pyclass(with(Constructor))]
+        impl PyClock {
+            /// tick(fps=0) -> float：推进一帧 + 上限节流，返回本帧真实
+            /// 间隔（**毫秒**，pygame 语义；引擎层为秒——绑定位换算）。
+            /// vsync 已把帧距拉到 ≥ 目标时不再补睡（三端同语义，无双重
+            /// 节流）；Web 上睡眠 no-op（rAF 节流），本调用只作度量。
+            #[pymethod]
+            fn tick(&self, fps: Option<u32>) -> f32 {
+                self.inner.borrow_mut().tick(fps.unwrap_or(0)) * 1000.0
+            }
+
+            /// get_time() -> float：本帧真实间隔（毫秒，同 tick 返回值）。
+            #[pymethod]
+            fn get_time(&self) -> f32 {
+                self.inner.borrow().raw_delta() * 1000.0
+            }
+
+            /// get_fps() -> float：EMA 平滑帧率。
+            #[pymethod]
+            fn get_fps(&self) -> f32 {
+                self.inner.borrow().get_fps()
+            }
+        }
+
+        impl Constructor for PyClock {
+            type Args = ();
+
+            fn py_new(
+                _cls: &Py<PyType>,
+                _args: Self::Args,
+                _vm: &VirtualMachine,
+            ) -> PyResult<Self> {
+                Ok(Self {
+                    inner: std::cell::RefCell::new(starfish::pygame::time::Clock::new()),
+                })
+            }
         }
     }
 
@@ -797,12 +901,10 @@ pub(crate) mod pygame {
         use crate::rpy::bridge;
         use rustpython_vm::builtins::{PyModule, PyStrRef, PyType};
         use rustpython_vm::{Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
-    
-        /// 默认字体（starfish 仓库标准字体，OFL 许可；跨仓库单源）。
-        pub(crate) const DEFAULT_FONT: &[u8] = include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../starfish/resources/fonts/Antonio-Regular.ttf"
-        ));
+
+        // 默认字体 = 顶层常量（见 mod pygame 顶部 DEFAULT_FONT 定义——维护者
+        // 自定义入口，本模块不重复声明）
+        use super::DEFAULT_FONT;
 
         /// pygame.font.Font——payload = starfish Font（内含字形缓存 RefCell，
         /// 单线程；无 Debug → 手写 impl）。
@@ -1099,7 +1201,7 @@ pub(crate) mod pygame {
     // Vector2 v1：构造/x/y/length/normalize/dot/加法/减法/标量乘；
     // rotate/angle_to/lerp/slerp/元素乘等留增强批。
     #[pymodule]
-    mod math {
+    pub(crate) mod math {
         use rustpython_derive::{pymodule, pyclass};
         use std::cell::Cell;
         use rustpython_vm::convert::TryFromObject;
@@ -1922,7 +2024,7 @@ pub(crate) mod pygame {
 
     // ── sndarray：Sound ↔ 嵌套 list 互转（Web/无 numpy 环境用 list 承载）──
     #[pymodule]
-    mod sndarray {
+    pub(crate) mod sndarray {
         use rustpython_derive::pymodule;
         use rustpython_vm::convert::TryFromObject;
         use rustpython_vm::{PyObjectRef, PyRef, PyResult, VirtualMachine};
@@ -1997,7 +2099,7 @@ pub(crate) mod pygame {
 
     // ── version：薄模块直通 ──
     #[pymodule]
-    mod version {
+    pub(crate) mod version {
         use rustpython_vm::VirtualMachine;
 
         /// pygame.version.ver：starfish pygame 层版本（= crate 版本）
@@ -2006,20 +2108,14 @@ pub(crate) mod pygame {
 
         /// pygame.version.vernum：版本三元组
         #[pyfunction]
-        fn vernum() -> (u8, u8, u8) {
-            starfish::pygame::version::vernum()
-        }
-
-        /// 底层 SDL 版本（垫底原则：保留名字，返回安全默认 (2, 0, 20)）
-        #[pyfunction]
-        fn get_sdl_version() -> (u8, u8, u8) {
-            starfish::pygame::version::get_sdl_version()
+        fn get_version() -> (u8, u8, u8) {
+            starfish::pygame::version::get_version()
         }
     }
 
     // ── transform：GPU 采样变换（批次 F；须 display init 后）─────────
     #[pymodule]
-    mod transform {
+    pub(crate) mod transform {
         use rustpython_derive::pymodule;
         use rustpython_vm::function::ArgIntoFloat;
         use rustpython_vm::{PyPayload, PyRef, PyResult, VirtualMachine};
@@ -2097,7 +2193,7 @@ pub(crate) mod pygame {
     // save 本质 = GPU 回读（CPU 落地），仅桌面同步形态；wasm 出栈至
     // save_async 异步语义批次。
     #[pymodule]
-    mod image {
+    pub(crate) mod image {
         use rustpython_derive::pymodule;
         use rustpython_vm::{PyPayload, PyRef, PyResult, VirtualMachine};
         use starfish::pygame::image as sf_image;
@@ -2154,10 +2250,109 @@ pub(crate) mod pygame {
     // ── key：按下视图查询（K_* 常量在 pygame 顶层，见 KEY_TABLE）─────
     // 按下状态由 starfish 事件泵喂（bridge::pump → event::get 自动驱动）。
     #[pymodule]
-    mod key {
-        use rustpython_vm::{PyPayload, PyRef, PyResult, VirtualMachine};
+    pub(crate) mod key {
+        use rustpython_vm::{Py, PyPayload, PyRef, PyResult, VirtualMachine, builtins::PyModule, pyclass};
+        use starfish::base::window::KeyCode;
+        use crate::rpy::native_pygame::pygame::event::PyKey;
 
-        use super::PyPressed;
+        /// K_* 全表（starfish locals::key 的 108 键，typed KeyCode；
+        /// SHIFT/CTRL/ALT/META 为左键别名）。exec 时注册为 pygame 顶层常量
+        /// （真 pygame 惯例：K_* 在顶层而非 key 子模块）。
+        /// 由于依赖PyKey类型，所以locals模块必须在event后面。
+        pub(crate) const KEY_TABLE: &[(&str, KeyCode)] = &[
+            // 字母
+            ("K_a", KeyCode::KeyA), ("K_b", KeyCode::KeyB), ("K_c", KeyCode::KeyC),
+            ("K_d", KeyCode::KeyD), ("K_e", KeyCode::KeyE), ("K_f", KeyCode::KeyF),
+            ("K_g", KeyCode::KeyG), ("K_h", KeyCode::KeyH), ("K_i", KeyCode::KeyI),
+            ("K_j", KeyCode::KeyJ), ("K_k", KeyCode::KeyK), ("K_l", KeyCode::KeyL),
+            ("K_m", KeyCode::KeyM), ("K_n", KeyCode::KeyN), ("K_o", KeyCode::KeyO),
+            ("K_p", KeyCode::KeyP), ("K_q", KeyCode::KeyQ), ("K_r", KeyCode::KeyR),
+            ("K_s", KeyCode::KeyS), ("K_t", KeyCode::KeyT), ("K_u", KeyCode::KeyU),
+            ("K_v", KeyCode::KeyV), ("K_w", KeyCode::KeyW), ("K_x", KeyCode::KeyX),
+            ("K_y", KeyCode::KeyY), ("K_z", KeyCode::KeyZ),
+            // 数字行
+            ("K_0", KeyCode::Digit0), ("K_1", KeyCode::Digit1), ("K_2", KeyCode::Digit2),
+            ("K_3", KeyCode::Digit3), ("K_4", KeyCode::Digit4), ("K_5", KeyCode::Digit5),
+            ("K_6", KeyCode::Digit6), ("K_7", KeyCode::Digit7), ("K_8", KeyCode::Digit8),
+            ("K_9", KeyCode::Digit9),
+            // 功能键
+            ("K_F1", KeyCode::F1), ("K_F2", KeyCode::F2), ("K_F3", KeyCode::F3),
+            ("K_F4", KeyCode::F4), ("K_F5", KeyCode::F5), ("K_F6", KeyCode::F6),
+            ("K_F7", KeyCode::F7), ("K_F8", KeyCode::F8), ("K_F9", KeyCode::F9),
+            ("K_F10", KeyCode::F10), ("K_F11", KeyCode::F11), ("K_F12", KeyCode::F12),
+            // 控制键
+            ("K_ESCAPE", KeyCode::Escape), ("K_TAB", KeyCode::Tab),
+            ("K_CAPSLOCK", KeyCode::CapsLock), ("K_SPACE", KeyCode::Space),
+            ("K_RETURN", KeyCode::Enter), ("K_BACKSPACE", KeyCode::Backspace),
+            ("K_DELETE", KeyCode::Delete), ("K_INSERT", KeyCode::Insert),
+            // 修饰键（左键别名组）
+            ("K_SHIFT", KeyCode::ShiftLeft), ("K_LSHIFT", KeyCode::ShiftLeft),
+            ("K_RSHIFT", KeyCode::ShiftRight),
+            ("K_CTRL", KeyCode::ControlLeft), ("K_LCTRL", KeyCode::ControlLeft),
+            ("K_RCTRL", KeyCode::ControlRight),
+            ("K_ALT", KeyCode::AltLeft), ("K_LALT", KeyCode::AltLeft),
+            ("K_RALT", KeyCode::AltRight),
+            ("K_META", KeyCode::MetaLeft), ("K_LMETA", KeyCode::MetaLeft),
+            ("K_RMETA", KeyCode::MetaRight),
+            ("K_MENU", KeyCode::ContextMenu),
+            // 方向 / 翻页
+            ("K_UP", KeyCode::ArrowUp), ("K_DOWN", KeyCode::ArrowDown),
+            ("K_LEFT", KeyCode::ArrowLeft), ("K_RIGHT", KeyCode::ArrowRight),
+            ("K_HOME", KeyCode::Home), ("K_END", KeyCode::End),
+            ("K_PAGEUP", KeyCode::PageUp), ("K_PAGEDOWN", KeyCode::PageDown),
+            // 符号
+            ("K_MINUS", KeyCode::Minus), ("K_EQUALS", KeyCode::Equal),
+            ("K_LEFTBRACKET", KeyCode::BracketLeft), ("K_RIGHTBRACKET", KeyCode::BracketRight),
+            ("K_BACKSLASH", KeyCode::Backslash), ("K_SEMICOLON", KeyCode::Semicolon),
+            ("K_QUOTE", KeyCode::Quote), ("K_BACKQUOTE", KeyCode::Backquote),
+            ("K_COMMA", KeyCode::Comma), ("K_PERIOD", KeyCode::Period),
+            ("K_SLASH", KeyCode::Slash),
+            // 小键盘
+            ("K_KP0", KeyCode::Numpad0), ("K_KP1", KeyCode::Numpad1),
+            ("K_KP2", KeyCode::Numpad2), ("K_KP3", KeyCode::Numpad3),
+            ("K_KP4", KeyCode::Numpad4), ("K_KP5", KeyCode::Numpad5),
+            ("K_KP6", KeyCode::Numpad6), ("K_KP7", KeyCode::Numpad7),
+            ("K_KP8", KeyCode::Numpad8), ("K_KP9", KeyCode::Numpad9),
+            ("K_KP_PLUS", KeyCode::NumpadAdd), ("K_KP_MINUS", KeyCode::NumpadSubtract),
+            ("K_KP_MULTIPLY", KeyCode::NumpadMultiply), ("K_KP_DIVIDE", KeyCode::NumpadDivide),
+            ("K_KP_ENTER", KeyCode::NumpadEnter), ("K_KP_PERIOD", KeyCode::NumpadDecimal),
+            // 其他
+            ("K_PRINT", KeyCode::PrintScreen), ("K_SCROLLLOCK", KeyCode::ScrollLock),
+            ("K_PAUSE", KeyCode::Pause), ("K_NUMLOCK", KeyCode::NumLock),
+        ];
+        ///先补挂子模块（自动版被用户 exec 顶替），再注册
+        /// K_* typed 常量到 pygame 顶层。Result
+        pub fn module_exec(vm: &VirtualMachine, module: &Py<PyModule>) -> PyResult<()> {
+            __init_attributes(vm, module);
+            for (name, kc) in KEY_TABLE {
+                module.set_attr(*name, PyKey(*kc).into_pyobject(vm), vm)?;
+            }
+            Ok(())
+        }
+
+        // ── 修饰键位常量（位值自定，承诺名字与语义）──
+        #[pyattr]
+        pub(crate) const KMOD_SHIFT: u32 = starfish::pygame::key::KMOD_SHIFT;
+        #[pyattr]
+        pub(crate) const KMOD_CTRL: u32 = starfish::pygame::key::KMOD_CTRL;
+        #[pyattr]
+        pub(crate) const KMOD_ALT: u32 = starfish::pygame::key::KMOD_ALT;
+        #[pyattr]
+        pub(crate) const KMOD_META: u32 = starfish::pygame::key::KMOD_META;
+
+
+        #[derive(Debug, PyPayload)]
+        #[pyclass(no_attr, module = false, name = "Pressed", unhashable = true)]
+        pub(crate) struct PyPressed;
+
+        #[pyclass]
+        impl PyPressed {
+            #[pymethod]
+            fn get(&self, key: PyRef<PyKey>) -> bool {
+                starfish::pygame::key::get_pressed().get(key.0)
+            }
+        }
+
 
         /// pygame.key.get_pressed() → Pressed 视图（.get(K_x) 查按下态）。
         #[pyfunction]
@@ -2173,7 +2368,7 @@ pub(crate) mod pygame {
 
         /// 键名（W3C KeyboardEvent.code 命名——name(K_x) = "KeyX" 等）。
         #[pyfunction]
-        fn name(key: PyRef<super::PyKey>, _vm: &VirtualMachine) -> String {
+        fn name(key: PyRef<PyKey>, _vm: &VirtualMachine) -> String {
             starfish::pygame::key::name(key.0)
         }
 
@@ -2193,20 +2388,12 @@ pub(crate) mod pygame {
             (0, 0)
         }
 
-        // ── 修饰键位常量（位值自定，承诺名字与语义）──
-        #[pyattr]
-        pub(crate) const KMOD_SHIFT: u32 = starfish::pygame::key::KMOD_SHIFT;
-        #[pyattr]
-        pub(crate) const KMOD_CTRL: u32 = starfish::pygame::key::KMOD_CTRL;
-        #[pyattr]
-        pub(crate) const KMOD_ALT: u32 = starfish::pygame::key::KMOD_ALT;
-        #[pyattr]
-        pub(crate) const KMOD_META: u32 = starfish::pygame::key::KMOD_META;
+
     }
 
     // ── mouse：位置 / 按键查询（状态由 starfish 事件泵喂）────────────
     #[pymodule]
-    mod mouse {
+    pub(crate) mod mouse {
         use crate::rpy::args::SfPoint;
         use rustpython_vm::VirtualMachine;
 
@@ -2260,7 +2447,7 @@ pub(crate) mod pygame {
     // Web Gamepad API 同序，映射表 = starfish BUTTON_ORDER/AXIS_ORDER，
     // from_index 出界 ValueError）。Android/iOS 后端恒空表（平台矩阵）。
     #[pymodule]
-    mod gamepad {
+    pub(crate) mod gamepad {
         use rustpython_vm::{PyObjectRef, PyResult, VirtualMachine};
 
         use starfish::base::gamepad::{Axis, Button};
@@ -2378,7 +2565,7 @@ pub(crate) mod pygame {
     // starfish touch.rs 既定决策）。桌面端恒空表（仅移动端产生 Touch
     // 事件；主手指已合成鼠标事件，交互逻辑可复用 mouse）。
     #[pymodule]
-    mod touch {
+    pub(crate) mod touch {
         use rustpython_vm::{PyObjectRef, PyResult, VirtualMachine};
 
         /// 当前按住的手指数（0 = 无触摸；桌面恒 0）。
@@ -2421,7 +2608,7 @@ pub(crate) mod pygame {
     // Web v1 不提供同步面（fetch 真异步，Python 同步面无法承载——
     // 用宿主预加载/资源句柄模式，同 Font("cjk") 先例），调用即报错。
     #[pymodule]
-    mod io {
+    pub(crate) mod io {
         use rustpython_vm::convert::TryFromObject;
         use rustpython_vm::{PyObjectRef, PyResult, VirtualMachine, builtins::PyStrRef};
 
@@ -2491,6 +2678,23 @@ pub(crate) mod pygame {
                 .map_err(|e| vm.new_value_error(format!("io exists 失败: {e}")))
         }
 
+        /// write_text(path, text)：覆盖写文本（UTF-8）
+        #[pyfunction]
+        fn write_text(path: PyStrRef, text: PyStrRef, vm: &VirtualMachine) -> PyResult<()> {
+            #[cfg(target_arch = "wasm32")]
+            return Err(vm.new_value_error(
+                "pygame.io: Web 端 v1 不提供同步 io（宿主预加载/异步资源装载承载）",
+            ));
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let t = text
+                    .to_str()
+                    .ok_or_else(|| vm.new_value_error("内容含非 UTF-8 字符"))?;
+                pollster::block_on(starfish::base::io::write_text(path_str(&path, vm)?, t))
+                    .map_err(|e| vm.new_value_error(format!("io 写入失败: {e}")))
+            }
+        }
+
         /// set_base_dir(dir)：相对路径基准目录（覆盖写；Android 由引擎自动
         /// 注入应用私有目录，一般无需手动调）
         #[pyfunction]
@@ -2510,7 +2714,7 @@ pub(crate) mod pygame {
     // 线程 + std 阻塞流，Web 自动 WebSocket——三平台同一轮询面）。
     // UDP = 原生专属（Web 显式不支持）。
     #[pymodule]
-    mod net {
+    pub(crate) mod net {
         use rustpython_derive::pyclass;
         use rustpython_vm::convert::TryFromObject;
         use rustpython_vm::types::Constructor;
@@ -2685,7 +2889,7 @@ pub(crate) mod pygame {
     //（SAF 轮询式 job）v1 不提供同步面，调用即报错——轮询式 job API
     // 为后续批次）──
     #[pymodule]
-    mod dialog {
+    pub(crate) mod dialog {
         use rustpython_derive::pyclass;
         use rustpython_vm::convert::TryFromObject;
         use rustpython_vm::{PyObjectRef, PyPayload, PyResult, VirtualMachine, builtins::PyStrRef};
@@ -2850,14 +3054,14 @@ pub(crate) mod pygame {
     // 只是签名适配：目标会话在前、坐标分离、颜色在后；aa* = 兼容别名，
     // AA 由 wgpu 线性采样承载，与 f.circle(...) 同一 batch 零额外成本）──
     #[pymodule]
-    mod gfxdraw {
-        use super::{PySession, PySurfaceSession};
+    pub(crate) mod gfxdraw {
+        use super::{PyScreenSession, PySurfaceSession};
         use crate::rpy::args::{SfColor, SfPoints, SfRect};
         use crate::rpy::bridge;
         use rustpython_vm::{PyObjectRef, PyResult, VirtualMachine};
 
         /// gfxdraw 目标：SurfaceSession 直绘（自有 batch）；Screen 会话
-        /// （PySession）= 当前活跃会话（with_session 路由，须在 with 内）。
+        /// （PyScreenSession）= 当前活跃会话（with_session 路由，须在 with 内）。
         enum Target<'a> {
             Surf(&'a PySurfaceSession),
             Active,
@@ -2867,7 +3071,7 @@ pub(crate) mod pygame {
             if let Some(ss) = f.downcast_ref::<PySurfaceSession>() {
                 return Ok(Target::Surf(ss));
             }
-            if f.downcast_ref::<PySession>().is_some() {
+            if f.downcast_ref::<PyScreenSession>().is_some() {
                 return Ok(Target::Active);
             }
             Err(vm.new_type_error(
@@ -3265,4 +3469,834 @@ pub(crate) mod pygame {
             box_(f, rect, color, vm)
         }
     }
+
+    // ── mask：位面（碰撞检测/像素级遮挡；pygame.mask 语义）────────
+    // 构建 = from_surface（影子快路径三端同步零回读；GPU 出生面原生
+    // 走一次性回读，Web 侧同步面对 GPU 出生面不提供——from_surface_async
+    // 承载，同 io 的 Web 分门先例）。
+    #[pymodule]
+    pub(crate) mod mask {
+        use rustpython_derive::pyclass;
+        use rustpython_vm::types::Constructor;
+        use rustpython_vm::{
+            Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine, builtins::PyType,
+        };
+        use starfish::pygame::mask::Mask as SfMask;
+
+        use crate::rpy::args::SfPoint;
+
+        /// pygame.mask.Mask——payload = starfish Mask（RefCell：位面
+        /// 方法带 &mut；无 Debug → 手写 impl）。
+        #[derive(PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame.mask", name = "Mask", unhashable = true)]
+        pub(crate) struct PyMask {
+            pub(crate) inner: std::cell::RefCell<SfMask>,
+        }
+
+        impl std::fmt::Debug for PyMask {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let (w, h) = self.inner.borrow().size();
+                f.write_str(&format!("Mask({}x{})", w, h))
+            }
+        }
+
+        pub(crate) type PyMaskRef = PyRef<PyMask>;
+
+        #[pyclass(with(Constructor))]
+        impl PyMask {
+            /// get_at(pos) -> bool：位读取。
+            #[pymethod]
+            fn get_at(&self, pos: SfPoint) -> bool {
+                self.inner
+                    .borrow()
+                    .get_at(pos.0.max(0) as u32, pos.1.max(0) as u32)
+            }
+
+            /// set_at(pos, value=True)：位写入。
+            #[pymethod]
+            fn set_at(&self, args: crate::rpy::args::MaskSetAtArgs) {
+                self.inner.borrow_mut().set_at(
+                    args.pos.0.max(0) as u32,
+                    args.pos.1.max(0) as u32,
+                    args.value.unwrap_or(true),
+                );
+            }
+
+            /// count() -> int：置位数。
+            #[pymethod]
+            fn count(&self) -> u32 {
+                self.inner.borrow().count()
+            }
+
+            /// get_size() -> (w, h)。
+            #[pymethod]
+            fn get_size(&self) -> (u32, u32) {
+                self.inner.borrow().size()
+            }
+
+            /// fill(value=True)：全位置位/清零。
+            #[pymethod]
+            fn fill(&self, args: crate::rpy::args::MaskFillArgs) {
+                self.inner.borrow_mut().fill(args.value.unwrap_or(true));
+            }
+
+            /// invert()：全位取反。
+            #[pymethod]
+            fn invert(&self) {
+                self.inner.borrow_mut().invert();
+            }
+
+            /// overlap(other, offset) -> (x, y) | None：首个重叠点
+            /// （None = 无重叠；offset = other 相对本的偏移）。
+            #[pymethod]
+            fn overlap(
+                &self,
+                other: PyRef<PyMask>,
+                offset: SfPoint,
+            ) -> Option<(i32, i32)> {
+                self.inner
+                    .borrow()
+                    .overlap(&other.inner.borrow(), (offset.0, offset.1))
+            }
+
+            /// overlap_area(other, offset) -> int：重叠位数量。
+            #[pymethod]
+            fn overlap_area(&self, other: PyRef<PyMask>, offset: SfPoint) -> u32 {
+                self.inner
+                    .borrow()
+                    .overlap_area(&other.inner.borrow(), (offset.0, offset.1))
+            }
+
+            /// overlap_mask(other, offset) -> Mask：重叠位图。
+            #[pymethod]
+            fn overlap_mask(
+                &self,
+                other: PyRef<PyMask>,
+                offset: SfPoint,
+                vm: &VirtualMachine,
+            ) -> PyRef<PyMask> {
+                let m = self
+                    .inner
+                    .borrow()
+                    .overlap_mask(&other.inner.borrow(), (offset.0, offset.1));
+                PyMask { inner: std::cell::RefCell::new(m) }.into_ref(&vm.ctx)
+            }
+
+            /// scale((w, h)) -> Mask：最近邻缩放（新位面）。
+            #[pymethod]
+            fn scale(&self, size: SfPoint, vm: &VirtualMachine) -> PyRef<PyMask> {
+                let m = self
+                    .inner
+                    .borrow()
+                    .scale((size.0.max(0) as u32, size.1.max(0) as u32));
+                PyMask { inner: std::cell::RefCell::new(m) }.into_ref(&vm.ctx)
+            }
+
+            /// to_surface() -> Surface：位面可视化（置位 = 白）。
+            #[pymethod]
+            fn to_surface(&self, vm: &VirtualMachine) -> PyRef<super::PySurface> {
+                let s = self.inner.borrow().to_surface();
+                super::PySurface { surface: std::sync::Arc::new(s) }.into_ref(&vm.ctx)
+            }
+        }
+
+        impl Constructor for PyMask {
+            type Args = crate::rpy::args::MaskArgs;
+
+            fn py_new(
+                _cls: &Py<PyType>,
+                args: Self::Args,
+                _vm: &VirtualMachine,
+            ) -> PyResult<Self> {
+                Ok(Self {
+                    inner: std::cell::RefCell::new(SfMask::new(
+                        (args.size.0.max(0) as u32, args.size.1.max(0) as u32),
+                        args.fill.unwrap_or(false),
+                    )),
+                })
+            }
+        }
+
+        /// from_surface(surface, threshold=127) -> Mask：离屏面 → 位面
+        /// （alpha > threshold 置位）。影子快路径三端同步零回读；GPU
+        /// 出生面的回读慢路径建议资产装载期构建、缓存复用（Web 端
+        /// GPU 出生面走 from_surface_async 语义，本同步面对其返回错误）。
+        #[pyfunction]
+        fn from_surface(
+            surface: PyRef<super::PySurface>,
+            threshold: Option<u8>,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyRef<PyMask>> {
+            let m = SfMask::from_surface(&surface.surface, threshold.unwrap_or(127))
+                .map_err(|e| vm.new_value_error(format!("mask.from_surface 失败: {e:?}")))?;
+            Ok(PyMask { inner: std::cell::RefCell::new(m) }.into_ref(&vm.ctx))
+        }
+    }
+
+    // ── permission：运行时权限（三平台语义差异见引擎模块文档）──────
+    // 桌面直通 / Web 委派 / Android：INTERNET 瞬时，MICROPHONE 阻塞
+    // 等待授权框——**绑定面同语义透传**（调用方自行决定申请时机）。
+    #[pymodule]
+    pub(crate) mod permission {
+        use rustpython_vm::{PyResult, VirtualMachine};
+        use starfish::pygame::permission::{self as sf_perm, Permission};
+
+        /// 权限标识：pygame.permission.MICROPHONE / INTERNET
+        #[pyattr]
+        pub(crate) const MICROPHONE: i32 = 0;
+        #[pyattr]
+        pub(crate) const INTERNET: i32 = 1;
+
+        fn map_perm(p: i32, vm: &VirtualMachine) -> PyResult<Permission> {
+            match p {
+                MICROPHONE => Ok(Permission::Microphone),
+                INTERNET => Ok(Permission::Internet),
+                _ => Err(vm.new_value_error(format!(
+                    "未知权限标识 {p}（可用：pygame.permission.MICROPHONE / INTERNET）"
+                ))),
+            }
+        }
+
+        /// ensure(permission) -> bool：同步申请（Android MICROPHONE 会
+        /// 弹系统授权框**阻塞等待**——自动化冒烟勿触碰；INTERNET 瞬时）。
+        #[pyfunction]
+        fn ensure(p: i32, vm: &VirtualMachine) -> PyResult<bool> {
+            Ok(sf_perm::ensure(map_perm(p, vm)?))
+        }
+    }
+
+    // ── video：视频解码（六平台硬解；接口面——真实播放的呈现集成
+    // 需引擎侧纹理桥，v1 接口可调即达标）──────────────────────────
+    #[pymodule]
+    pub(crate) mod video {
+        use rustpython_derive::pyclass;
+        use rustpython_vm::types::Constructor;
+        use rustpython_vm::{
+            Py, PyPayload, PyRef, PyResult, VirtualMachine,
+            builtins::{PyStrRef, PyType},
+        };
+        use starfish::pygame::video::{VideoSystem as SfVideoSystem, Video as SfVideo};
+
+        /// pygame.video.VideoSystem——解码系统入口（set_mode 后创建）。
+        #[derive(PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame.video", name = "VideoSystem", unhashable = true)]
+        pub(crate) struct PyVideoSystem {
+            pub(crate) inner: SfVideoSystem,
+        }
+
+        impl std::fmt::Debug for PyVideoSystem {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("VideoSystem(<decoder>)")
+            }
+        }
+
+        #[pyclass(with(Constructor))]
+        impl PyVideoSystem {
+            /// open(path) -> Video：打开媒体文件（缺失/不支持格式抛 ValueError）。
+            #[pymethod]
+            fn open(&self, path: PyStrRef, vm: &VirtualMachine) -> PyResult<PyRef<PyVideo>> {
+                let p = path
+                    .to_str()
+                    .ok_or_else(|| vm.new_value_error("路径含非 UTF-8 字符"))?;
+                let v = self
+                    .inner
+                    .open(p)
+                    .map_err(|e| vm.new_value_error(format!("video.open 失败: {e:?}")))?;
+                Ok(PyVideo { inner: std::cell::RefCell::new(v) }.into_ref(&vm.ctx))
+            }
+        }
+
+        impl Constructor for PyVideoSystem {
+            type Args = ();
+
+            fn py_new(
+                _cls: &Py<PyType>,
+                _args: Self::Args,
+                _vm: &VirtualMachine,
+            ) -> PyResult<Self> {
+                Ok(Self { inner: SfVideoSystem::new() })
+            }
+        }
+
+        /// pygame.video.Video——已打开的媒体（update 驱动解码推进）。
+        #[derive(PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame.video", name = "Video", unhashable = true)]
+        pub(crate) struct PyVideo {
+            pub(crate) inner: std::cell::RefCell<SfVideo>,
+        }
+
+        impl std::fmt::Debug for PyVideo {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let (w, h) = self.inner.borrow().size();
+                f.write_str(&format!("Video({}x{})", w, h))
+            }
+        }
+
+        #[pyclass]
+        impl PyVideo {
+            /// update(dt_seconds)：推进解码（dt = 距上次调用的秒数；
+            /// 解码错误抛 ValueError）。
+            #[pymethod]
+            fn update(&self, dt: f64, vm: &VirtualMachine) -> PyResult<()> {
+                self.inner
+                    .borrow_mut()
+                    .update(std::time::Duration::from_secs_f64(dt.max(0.0)))
+                    .map_err(|e| vm.new_value_error(format!("video.update 失败: {e:?}")))
+            }
+
+            /// size() -> (w, h)：视频原始尺寸。
+            #[pymethod]
+            fn size(&self) -> (u32, u32) {
+                self.inner.borrow().size()
+            }
+
+            /// position() -> float：当前播放位置（秒）。
+            #[pymethod]
+            fn position(&self) -> f64 {
+                self.inner.borrow().position().as_secs_f64()
+            }
+
+            /// ended() -> bool：是否播放到尾。
+            #[pymethod]
+            fn ended(&self) -> bool {
+                self.inner.borrow().ended()
+            }
+
+            /// has_audio() -> bool：是否含音轨。
+            #[pymethod]
+            fn has_audio(&self) -> bool {
+                self.inner.borrow().has_audio()
+            }
+
+            /// set_video_enabled(enabled)：视频轨开关（纯音轨模式）。
+            #[pymethod]
+            fn set_video_enabled(&self, enabled: bool) {
+                self.inner.borrow_mut().set_video_enabled(enabled)
+            }
+
+            /// video_enabled() -> bool。
+            #[pymethod]
+            fn video_enabled(&self) -> bool {
+                self.inner.borrow().video_enabled()
+            }
+
+            /// set_audio_volume(v)：音量 0.0..1.0。
+            #[pymethod]
+            fn set_audio_volume(&self, v: f32) {
+                self.inner.borrow().set_audio_volume(v)
+            }
+
+            /// set_muted(m)：静音开关。
+            #[pymethod]
+            fn set_muted(&self, m: bool) {
+                self.inner.borrow().set_muted(m)
+            }
+        }
+    }
+
+    // ── targets：MRT 会话（`with pygame.targets([a, b]) as t:`——一次
+    //    pass 镜像写 N≥2 目标；兼容层模块架构 §3.1 预言形态落地）────
+    // 方法面 = 会话绘制核心集（fill/rect/circle/line/polygon/ellipse/
+    // arc/blit）；目标 Arc 由 bridge 保活至 __exit__（render_targets_arc
+    // 契约）。块内绘制经 with_mrt_session 路由。
+    /// pygame.targets(surfaces) -> TargetsSession：MRT 会话入口
+    /// （N≥2 个 Surface 一次 pass 镜像写入）。
+    #[allow(non_snake_case)]
+    #[pyfunction]
+    fn targets(surfaces: Vec<PyRef<PySurface>>) -> PyTargetsSession {
+        PyTargetsSession {
+            surfaces: surfaces.into_iter().map(|s| s.surface.clone()).collect(),
+        }
+    }
+
+    #[derive(PyPayload)]
+    #[pyclass(no_attr, module = false, name = "TargetsSession", unhashable = true)]
+    pub(crate) struct PyTargetsSession {
+        pub(crate) surfaces: Vec<std::sync::Arc<SfSurface>>,
+    }
+
+    impl std::fmt::Debug for PyTargetsSession {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(&format!("TargetsSession(×{} 目标)", self.surfaces.len()))
+        }
+    }
+
+    #[pyclass]
+    impl PyTargetsSession {
+        #[pymethod]
+        fn __enter__(zelf: PyRef<Self>) -> PyRef<Self> {
+            bridge::mrt_begin(&zelf.surfaces);
+            zelf
+        }
+
+        /// 异常不吞（返回 False 交回宿主壳打印收口）。
+        #[pymethod]
+        fn __exit__(&self, _exc_info: FuncArgs) -> bool {
+            bridge::mrt_end();
+            false
+        }
+
+        #[pymethod]
+        fn fill(&self, args: args::FillArgs, vm: &VirtualMachine) -> PyResult<()> {
+            let rgba = args.color.0;
+            bridge::with_mrt_session(vm, |p| {
+                use starfish::pygame::render::DrawTarget;
+                p.fill(rgba);
+            })
+        }
+
+        #[pymethod]
+        fn rect(&self, args: args::DrawRectArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_mrt_session(vm, |p| {
+                starfish::pygame::draw::rect(
+                    p,
+                    bridge::color_of(args.color),
+                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    args.width.unwrap_or(0).max(0) as u32,
+                );
+            })
+        }
+
+        #[pymethod]
+        fn circle(&self, args: args::DrawCircleArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_mrt_session(vm, |p| {
+                starfish::pygame::draw::circle(
+                    p,
+                    bridge::color_of(args.color),
+                    (args.center.0, args.center.1),
+                    args.radius.max(0) as u32,
+                    args.width.unwrap_or(0).max(0) as u32,
+                );
+            })
+        }
+
+        #[pymethod]
+        fn line(&self, args: args::DrawLineArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_mrt_session(vm, |p| {
+                starfish::pygame::draw::line(
+                    p,
+                    bridge::color_of(args.color),
+                    (args.start.0, args.start.1),
+                    (args.end.0, args.end.1),
+                    args.width.unwrap_or(1).max(0) as u32,
+                );
+            })
+        }
+
+        #[pymethod]
+        fn polygon(&self, args: args::DrawPolygonArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_mrt_session(vm, |p| {
+                starfish::pygame::draw::polygon(
+                    p,
+                    bridge::color_of(args.color),
+                    &args.points.0,
+                    args.width.unwrap_or(0).max(0) as u32,
+                );
+            })
+        }
+
+        #[pymethod]
+        fn ellipse(&self, args: args::DrawEllipseArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_mrt_session(vm, |p| {
+                starfish::pygame::draw::ellipse(
+                    p,
+                    bridge::color_of(args.color),
+                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    args.width.unwrap_or(0).max(0) as u32,
+                );
+            })
+        }
+
+        #[pymethod]
+        fn arc(&self, args: args::DrawArcArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_mrt_session(vm, |p| {
+                starfish::pygame::draw::arc(
+                    p,
+                    bridge::color_of(args.color),
+                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    args.start_angle.into_float() as f32,
+                    args.stop_angle.into_float() as f32,
+                    args.width.unwrap_or(1).max(0) as u32,
+                );
+            })
+        }
+
+        /// blit(src, dest) -> Rect：Surface 贴入 MRT 会话。
+        #[pymethod]
+        fn blit(
+            &self,
+            src: PyRef<PySurface>,
+            dest: args::SfPoint,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyObjectRef> {
+            bridge::with_mrt_session(vm, |p| {
+                use starfish::pygame::render::DrawTarget;
+                p.blit(&src.surface, (dest.0, dest.1))
+            })
+            .map(|r| PyRect(Cell::new(r)).into_ref(&vm.ctx).into())
+        }
+
+        /// blit_area(src, dest, area, color=None) -> Rect：UV 子区域贴图
+        /// （with_batch push_quad_uv 直通）。
+        #[pymethod]
+        fn blit_area(&self, args: args::BlitAreaArgs, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let r = bridge::with_mrt_session(vm, |p| {
+                bridge::blit_area(p, &args.src, args.dest, args.area, args.color, vm)
+            })??;
+            Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx).into())
+        }
+
+        /// quad(texture, corners, uvs, color)：任意四角贴图（with_batch
+        /// push_quad_corners 直通）。
+        #[pymethod]
+        fn quad(&self, args: args::QuadCornersArgs, vm: &VirtualMachine) -> PyResult<()> {
+            bridge::with_mrt_session(vm, |p| bridge::quad_corners(p, args, vm))?;
+            Ok(())
+        }
+    }
+
+    // ── sprite：精灵/组（Godot 式池化组 + 世代 id 的 pyclass 桥）──────
+    // 设计：Python 侧 Sprite = 配置对象（表面 + 链式参数），Group.add
+    // 时物化为 starfish Sprite 并把返回的世代 id 回写进配置对象（Copy
+    // 纯值，跨 GC 边界零生命周期负担）；此后该 Sprite 即"绑定到组"的
+    // 句柄（alive/position/move_by 均经 id 路由）。draw 路由活跃会话
+    // （单形态定约：with screen.render() as r: 块内 g.draw()）。
+    #[pymodule]
+    mod sprite {
+        use rustpython_derive::pyclass;
+        use rustpython_vm::types::Constructor;
+        use rustpython_vm::{
+            Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
+            builtins::{PyStrRef, PyType},
+        };
+        use starfish::pygame::sprite as sf_sprite;
+
+        use crate::rpy::args::SfPoint;
+
+        /// 组条目的完整规格（add 时一次性物化）
+        struct SpriteSpec {
+            at: (i32, i32),
+            tag: Option<String>,
+            z: i32,
+            rotation: f32,
+            scale: f32,
+            alpha: Option<f32>,
+            visible: bool,
+            fps: f32,
+        }
+
+        /// pygame.sprite.Sprite——配置对象；Group.add 后成为组句柄。
+        /// 单帧 = Surface；多帧 = [Surface, ...]（帧动画，fps 由
+        /// `set_fps` 定，缺省 4）。
+        #[derive(PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame.sprite", name = "Sprite", unhashable = true)]
+        pub(crate) struct PySprite {
+            pub(crate) surfaces: Vec<std::sync::Arc<super::SfSurface>>,
+            pub(crate) spec: std::cell::RefCell<SpriteSpec>,
+            pub(crate) id: std::cell::Cell<Option<sf_sprite::SpriteId>>,
+        }
+
+        impl std::fmt::Debug for PySprite {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&format!("Sprite({} 帧, x{} 帧)", self.surfaces.len(), self.spec.borrow().at.0))
+            }
+        }
+
+        impl Constructor for PySprite {
+            type Args = (PyObjectRef,);
+
+            fn py_new(
+                _cls: &Py<PyType>,
+                args: Self::Args,
+                vm: &VirtualMachine,
+            ) -> PyResult<Self> {
+                let (img,) = args;
+                // Surface 实例或 [Surface, ...] 列表双形态
+                let surfaces: Vec<std::sync::Arc<super::SfSurface>> = if let Some(s) =
+                    img.downcast_ref::<super::PySurface>()
+                {
+                    vec![s.surface.clone()]
+                } else {
+                    vm.extract_elements_with(&img, |o: PyObjectRef| {
+                        o.downcast_ref::<super::PySurface>()
+                            .map(|s| s.surface.clone())
+                            .ok_or_else(|| {
+                                vm.new_type_error("Sprite 参数须为 Surface 或 Surface 列表")
+                            })
+                    })?
+                };
+                if surfaces.is_empty() {
+                    return Err(vm.new_value_error("Sprite 至少需要一帧 Surface"));
+                }
+                Ok(Self {
+                    surfaces,
+                    spec: std::cell::RefCell::new(SpriteSpec {
+                        at: (0, 0),
+                        tag: None,
+                        z: 0,
+                        rotation: 0.0,
+                        scale: 1.0,
+                        alpha: None,
+                        visible: true,
+                        fps: 4.0,
+                    }),
+                    id: std::cell::Cell::new(None),
+                })
+            }
+        }
+
+        #[pyclass(with(Constructor))]
+        impl PySprite {
+            /// at(x, y) -> self：初始位置（链式）
+            #[pymethod]
+            fn at(zelf: PyRef<Self>, x: i32, y: i32) -> PyRef<Self> {
+                zelf.spec.borrow_mut().at = (x, y);
+                zelf
+            }
+
+            /// tag(name) -> self：分组标签（链式；with_tag 查询用）
+            #[pymethod]
+            fn tag(zelf: PyRef<Self>, tag: PyStrRef, vm: &VirtualMachine) -> PyResult<PyRef<Self>> {
+                let t = tag
+                    .to_str()
+                    .ok_or_else(|| vm.new_value_error("tag 含非 UTF-8 字符"))?
+                    .to_owned();
+                zelf.spec.borrow_mut().tag = Some(t);
+                Ok(zelf)
+            }
+
+            /// z(v) -> self：层级（(z, y) 排序会话绘制）
+            #[pymethod]
+            fn z(zelf: PyRef<Self>, v: i32) -> PyRef<Self> {
+                zelf.spec.borrow_mut().z = v;
+                zelf
+            }
+
+            /// rotation(deg) -> self：旋转角（度）
+            #[pymethod]
+            fn rotation(zelf: PyRef<Self>, deg: f32) -> PyRef<Self> {
+                zelf.spec.borrow_mut().rotation = deg;
+                zelf
+            }
+
+            /// scale(f) -> self：等比缩放
+            #[pymethod]
+            fn scale(zelf: PyRef<Self>, f: f32) -> PyRef<Self> {
+                zelf.spec.borrow_mut().scale = f;
+                zelf
+            }
+
+            /// alpha(a) -> self：表面级半透明（0.0..1.0）
+            #[pymethod]
+            fn alpha(zelf: PyRef<Self>, a: f32) -> PyRef<Self> {
+                zelf.spec.borrow_mut().alpha = Some(a.clamp(0.0, 1.0));
+                zelf
+            }
+
+            /// visible(b) -> self：可见性
+            #[pymethod]
+            fn visible(zelf: PyRef<Self>, b: bool) -> PyRef<Self> {
+                zelf.spec.borrow_mut().visible = b;
+                zelf
+            }
+
+            /// set_fps(f)：多帧动画帧率（缺省 4）
+            #[pymethod]
+            fn set_fps(&self, f: f32) {
+                self.spec.borrow_mut().fps = f.max(0.1);
+            }
+
+            /// alive() -> bool：是否已在组内存活（未 add = False）
+            #[pymethod]
+            fn alive(&self) -> bool {
+                self.id.get().is_some()
+            }
+        }
+
+        /// pygame.sprite.Group——池化组（世代 id；remove 后旧句柄自动失效）。
+        #[derive(PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame.sprite", name = "Group", unhashable = true)]
+        pub(crate) struct PyGroup {
+            pub(crate) inner: std::cell::RefCell<sf_sprite::Group>,
+        }
+
+        impl std::fmt::Debug for PyGroup {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("Group(<pooled>)")
+            }
+        }
+
+        fn spec_to_sprite(sprite: &PySprite, vm: &VirtualMachine) -> PyResult<sf_sprite::Sprite> {
+            let spec = sprite.spec.borrow();
+            let mut it = if sprite.surfaces.len() >= 2 {
+                let refs: Vec<&super::SfSurface> =
+                    sprite.surfaces.iter().map(|s| s.as_ref()).collect();
+                sf_sprite::Sprite::with_frames(&refs, spec.fps)
+            } else {
+                sf_sprite::Sprite::new(&sprite.surfaces[0])
+            };
+            it = it.at(spec.at.0, spec.at.1).z(spec.z).scale(spec.scale).visible(spec.visible);
+            if spec.rotation != 0.0 {
+                it = it.rotated(spec.rotation);
+            }
+            if let Some(a) = spec.alpha {
+                it = it.alpha(a);
+            }
+            if let Some(t) = &spec.tag {
+                let leaked: &'static str = t.clone().leak();
+                it = it.tag(leaked);
+            }
+            let _ = vm;
+            Ok(it)
+        }
+
+        fn id_of(sprite: &PySprite, vm: &VirtualMachine) -> PyResult<sf_sprite::SpriteId> {
+            sprite.id.get().ok_or_else(|| {
+                vm.new_value_error("Sprite 尚未加入任何 Group（先 group.add(sprite)）")
+            })
+        }
+
+        #[pyclass(with(Constructor))]
+        impl PyGroup {
+
+            /// add(sprite) -> sprite：物化配置入组并回写世代 id
+            /// （返回原对象以便链式/即取即用）。
+            #[pymethod]
+            fn add(&self, sprite: PyRef<PySprite>, vm: &VirtualMachine) -> PyResult<PyRef<PySprite>> {
+                let it = spec_to_sprite(&sprite, vm)?;
+                let id = self.inner.borrow_mut().insert(it);
+                sprite.id.set(Some(id));
+                Ok(sprite)
+            }
+
+            /// remove(sprite) -> bool：出组（世代 id 失效，旧句柄安全）。
+            #[pymethod]
+            fn remove(&self, sprite: PyRef<PySprite>, vm: &VirtualMachine) -> PyResult<bool> {
+                let id = id_of(&sprite, vm)?;
+                let removed = self.inner.borrow_mut().remove(id);
+                if removed {
+                    sprite.id.set(None);
+                }
+                Ok(removed)
+            }
+
+            /// alive(sprite) -> bool：句柄是否存活。
+            #[pymethod]
+            fn alive(&self, sprite: PyRef<PySprite>, vm: &VirtualMachine) -> PyResult<bool> {
+                match sprite.id.get() {
+                    Some(id) => Ok(self.inner.borrow().is_alive(id)),
+                    None => Ok(false),
+                }
+            }
+
+            /// count() -> int：组内存活精灵数。
+            #[pymethod]
+            fn count(&self) -> usize {
+                self.inner.borrow().count()
+            }
+
+            /// position(sprite) -> (x, y) | None。
+            #[pymethod]
+            fn position(
+                &self,
+                sprite: PyRef<PySprite>,
+                vm: &VirtualMachine,
+            ) -> PyResult<Option<(i32, i32)>> {
+                let id = id_of(&sprite, vm)?;
+                Ok(self.inner.borrow().position(id))
+            }
+
+            /// move_by(sprite, dx, dy)：位移。
+            #[pymethod]
+            fn move_by(&self, sprite: PyRef<PySprite>, dx: i32, dy: i32, vm: &VirtualMachine) -> PyResult<()> {
+                let id = id_of(&sprite, vm)?;
+                self.inner.borrow_mut().move_by(id, dx, dy);
+                Ok(())
+            }
+
+            /// set_position(sprite, x, y)。
+            #[pymethod]
+            fn set_position(&self, sprite: PyRef<PySprite>, x: i32, y: i32, vm: &VirtualMachine) -> PyResult<()> {
+                let id = id_of(&sprite, vm)?;
+                self.inner.borrow_mut().set_position(id, x, y);
+                Ok(())
+            }
+
+            /// set_z(sprite, v)：层级。
+            #[pymethod]
+            fn set_z(&self, sprite: PyRef<PySprite>, v: i32, vm: &VirtualMachine) -> PyResult<()> {
+                let id = id_of(&sprite, vm)?;
+                self.inner.borrow_mut().set_z(id, v);
+                Ok(())
+            }
+
+            /// set_rotation(sprite, deg)。
+            #[pymethod]
+            fn set_rotation(&self, sprite: PyRef<PySprite>, deg: f32, vm: &VirtualMachine) -> PyResult<()> {
+                let id = id_of(&sprite, vm)?;
+                self.inner.borrow_mut().set_rotation(id, deg);
+                Ok(())
+            }
+
+            /// set_scale(sprite, f)。
+            #[pymethod]
+            fn set_scale(&self, sprite: PyRef<PySprite>, f: f32, vm: &VirtualMachine) -> PyResult<()> {
+                let id = id_of(&sprite, vm)?;
+                self.inner.borrow_mut().set_scale(id, f);
+                Ok(())
+            }
+
+            /// set_visible(sprite, b)。
+            #[pymethod]
+            fn set_visible(&self, sprite: PyRef<PySprite>, b: bool, vm: &VirtualMachine) -> PyResult<()> {
+                let id = id_of(&sprite, vm)?;
+                self.inner.borrow_mut().set_visible(id, b);
+                Ok(())
+            }
+
+            /// with_tag(tag) -> [Sprite]：标签过滤（返回存活句柄列表）。
+            #[pymethod]
+            fn with_tag(&self, tag: PyStrRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+                let t = tag
+                    .to_str()
+                    .ok_or_else(|| vm.new_value_error("tag 含非 UTF-8 字符"))?;
+                let _ = vm;
+                // v1：id 级过滤无法反查 Python 对象——返回数量（句柄反查
+                // 属对象表设计，随 v2 资源句柄表立项）
+                let n = self.inner.borrow().with_tag(t).len();
+                Ok(vm.ctx.new_int(n as i64).into())
+            }
+
+            /// tick(dt_seconds)：推进帧动画/时序。
+            #[pymethod]
+            fn tick(&self, dt: f32) {
+                self.inner.borrow_mut().tick(dt);
+            }
+
+            /// draw()：全组绘制到**活跃会话**（单形态定约——须在
+            /// `with screen.render() as r:` 块内调用）。
+            #[pymethod]
+            fn draw(&self, vm: &VirtualMachine) -> PyResult<()> {
+                crate::rpy::bridge::with_session(vm, |p| self.inner.borrow().draw(p))
+            }
+        }
+
+        impl Constructor for PyGroup {
+            type Args = ();
+
+            fn py_new(
+                _cls: &Py<PyType>,
+                _args: Self::Args,
+                _vm: &VirtualMachine,
+            ) -> PyResult<Self> {
+                Ok(Self { inner: std::cell::RefCell::new(sf_sprite::Group::new()) })
+            }
+        }
+    }
+
 }

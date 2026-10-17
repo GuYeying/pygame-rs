@@ -14,29 +14,37 @@ use starfish::pygame::Rect;
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     display::set_mode((400, 300)).await?;
-
+    let screen = display::get_screen();
     let green = Surface::new((40, 40));
-    green.fill([0, 200, 70, 255]);
+    let r = green.render();
+    r.fill([0, 200, 70, 255]);
+    r.end();
 
     let mut frame = 0u32;
     loop {
-        let screen = display::get_screen();
-        screen.fill([120, 20, 30, 255]); // 深红底
-        screen.blit(&green, (20, 20)); // blit 1
+        
+        let r = screen.render();
+        r.fill([120, 20, 30, 255]); // 深红底
+        r.blit(&green, (20, 20)); // blit 1
         draw::rect(
             screen,
             [40, 80, 220, 255],
             Rect::new(200, 20, 60, 60),
             0,
         ); // draw 1
-        screen.blit(&green, (20, 100)); // blit 2
+        
         draw::rect(
             screen,
             [240, 240, 240, 255],
             Rect::new(280, 100, 60, 60),
             0,
         ); // draw 2
+        
+        r.blit(&green, (20, 100)); // blit 2
+        r.end();
+
         display::flip();
+
 
         frame += 1;
         if frame % 60 == 0 {

@@ -44,6 +44,11 @@ pub struct SfColor(pub [u8; 4]);
 
 impl TryFromObject for SfColor {
     fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
+        // 直通句柄分支：pygame.Color 实例 → 零转换拷贝（批次三十九）
+        if let Some(c) = obj.downcast_ref::<crate::rpy::native_pygame::PyColor>() {
+            let c = c.get();
+            return Ok(Self([c.r, c.g, c.b, c.a]));
+        }
         let items = seq_i32(vm, obj)?;
         let rgba: [i32; 4] = match items.as_slice() {
             [r, g, b] => [*r, *g, *b, 255],
@@ -112,6 +117,96 @@ impl TryFromObject for SfPoints {
         })?;
         Ok(Self(pts))
     }
+}
+
+/// 平面点（f32 宽收——int/float 均收；角点/亚像素坐标用）
+#[derive(Debug, Clone, Copy)]
+pub struct SfFPoint(pub f32, pub f32);
+
+impl TryFromObject for SfFPoint {
+    fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
+        use rustpython_vm::function::ArgIntoFloat;
+        let items: Vec<f64> = vm.extract_elements_with(&obj, |o| {
+            ArgIntoFloat::try_from_object(vm, o).map(|v| v.into_float())
+        })?;
+        if items.len() != 2 {
+            return Err(vm.new_type_error(format!(
+                "点 (x, y) 长度必须为 2，实际 {} 个分量",
+                items.len()
+            )));
+        }
+        Ok(Self(items[0] as f32, items[1] as f32))
+    }
+}
+
+/// f32 点列（quad 角点/uv 固定 4 组；vertices/geometry 顶点列任意长度
+/// ——长度在会话方法层校验）
+#[derive(Debug, Clone)]
+pub struct SfFPoints(pub Vec<(f32, f32)>);
+
+/// vertices 收参（topo = "triangles"/"lines"）
+#[derive(FromArgs)]
+pub(crate) struct VerticesArgs {
+    #[pyarg(any)]
+    pub(crate) topo: String,
+    #[pyarg(any)]
+    pub(crate) points: SfFPoints,
+    /// 统一颜色（缺省白）
+    #[pyarg(any, optional)]
+    pub(crate) color: Option<SfColor>,
+}
+
+/// geometry 收参（kind = "filled"/"line"；indices 空 = 逐 3 顶点一切三角）
+#[derive(FromArgs)]
+pub(crate) struct GeometryArgs {
+    #[pyarg(any)]
+    pub(crate) kind: String,
+    #[pyarg(any)]
+    pub(crate) points: SfFPoints,
+    /// u16 索引（空 = 逐 3 顶点一切三角）
+    #[pyarg(any, optional)]
+    pub(crate) indices: Option<PyObjectRef>,
+    #[pyarg(any, optional)]
+    pub(crate) color: Option<SfColor>,
+}
+
+impl TryFromObject for SfFPoints {
+    fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
+        let pts = vm.extract_elements_with(&obj, |o| {
+            SfFPoint::try_from_object(vm, o).map(|p| (p.0, p.1))
+        })?;
+        Ok(Self(pts))
+    }
+}
+
+/// `blit_area(src, dest, area, color=None)`：with_batch UV 子区域贴图
+/// （Session/SurfaceSession/TargetsSession 三会话同签名）
+#[derive(FromArgs)]
+pub(crate) struct BlitAreaArgs {
+    #[pyarg(any)]
+    pub(crate) src: PyObjectRef,
+    #[pyarg(any)]
+    pub(crate) dest: SfPoint,
+    /// 源面像素坐标子区域 (x, y, w, h)
+    #[pyarg(any)]
+    pub(crate) area: SfRect,
+    /// 调色（缺省白 = 原样贴出）
+    #[pyarg(any, optional)]
+    pub(crate) color: Option<SfColor>,
+}
+
+/// `quad(texture, corners, uvs, color)`：任意四角贴图（with_batch
+/// push_quad_corners 直通；角点/uv 各 4 组，uv 归一 0..1）
+#[derive(FromArgs)]
+pub(crate) struct QuadCornersArgs {
+    #[pyarg(any)]
+    pub(crate) texture: PyObjectRef,
+    #[pyarg(any)]
+    pub(crate) corners: SfFPoints,
+    #[pyarg(any)]
+    pub(crate) uvs: SfFPoints,
+    #[pyarg(any)]
+    pub(crate) color: SfColor,
 }
 
 // ── draw 族收参结构体（签名契约源 = bridge.rs 的注册名）─────────
@@ -198,4 +293,39 @@ pub(crate) struct DrawArcArgs {
 pub(crate) struct FillArgs {
     #[pyarg(any)]
     pub(crate) color: SfColor,
+}
+
+/// `pygame.Surface((w, h), depth_buffer=False)` 收参（绑定定约
+/// 架构 §九.2：**depth_buffer=** 表达深度缓冲——真 pygame 的 `depth=`
+/// 是每像素位数语义，禁用；缺省 = 仅 color 面）
+#[derive(FromArgs)]
+pub(crate) struct SurfaceArgs {
+    #[pyarg(any)]
+    pub(crate) size: SfPoint,
+    #[pyarg(any, optional)]
+    pub(crate) depth_buffer: Option<bool>,
+}
+
+/// `pygame.mask.Mask((w, h), fill=False)` 收参
+#[derive(FromArgs)]
+pub(crate) struct MaskArgs {
+    #[pyarg(any)]
+    pub(crate) size: SfPoint,
+    #[pyarg(any, optional)]
+    pub(crate) fill: Option<bool>,
+}
+
+#[derive(FromArgs)]
+pub(crate) struct MaskSetAtArgs {
+    #[pyarg(any)]
+    pub(crate) pos: SfPoint,
+    /// 缺省 True（pygame set_at 惯例）
+    #[pyarg(any, optional)]
+    pub(crate) value: Option<bool>,
+}
+
+#[derive(FromArgs)]
+pub(crate) struct MaskFillArgs {
+    #[pyarg(any, optional)]
+    pub(crate) value: Option<bool>,
 }

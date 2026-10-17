@@ -116,18 +116,12 @@ async fn preload_cjk(tag: &str) {
 /// - `transparent`：透明窗口创建（TRANSPARENT 创建旗标 + 引擎透明底
 ///   清屏——桌宠/悬浮件形态。透明时跳过铺底，脚本内勿填不透明底色）。
 pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<dyn std::error::Error>> {
-    use starfish::pygame::locals::display as dflags;
+    use starfish::pygame::display as dflags;
     dlog(tag, "starting");
     let flags = if transparent { dflags::TRANSPARENT } else { 0 };
     match display::set_mode_ex((800, 600), flags).await {
         Ok(_) => {
             dlog(tag, "set_mode OK");
-            // 铺底色消除白闪（定约）；透明窗口跳过铺底（不透明底色会
-            // 盖掉透明合成——脚本自绘内容即窗体）
-            if !transparent {
-                starfish::pygame::display::get_screen().fill([30, 30, 46, 255]);
-                display::flip();
-            }
         }
         Err(e) => {
             dlog(tag, &format!("set_mode ERR: {e}"));
