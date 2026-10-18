@@ -28,19 +28,17 @@ def game():
     except (ValueError, TypeError):
         ctry = font
         has_ctry = False
-    # ── 音频：平台分支（needs_gesture = Web 浏览器自动播放策略，cfg 判定）──
-    # 原生（桌面/Android）：无手势限制，直接创建 + 无限循环播放
-    # Web：AudioContext 须待首次用户手势（keydown/mousedown 均为
-    #  User Activation），snd 保持 None，延后到事件循环的解锁点创建
+    # ── 音频：三平台同代码（2026-10-18 定约：Web 自动播放策略 = 部署
+    # 约定——build_web.py 产物带"点击启动"覆盖层，AudioContext 创建
+    # 必然落在首次手势调用栈内；无运行时手势检测）──
     snd = None
-    if not pygame.mixer.needs_gesture():
-        try:
-            snd = pygame.mixer.Sound()
-            snd.play(-1)                     # 无限循环：播完自动回卷（引擎音频
-                                             #  回调内完成，无缝衔接）
-            print("[diag] 原生平台：提示音已直接循环播放 len =", snd.get_length())
-        except (ValueError, TypeError) as e:
-            print("[diag] 原生平台：音频初始化失败（继续无音频运行）:", e)
+    try:
+        snd = pygame.mixer.Sound()
+        snd.play(-1)                     # 无限循环：播完自动回卷（引擎音频
+                                         #  回调内完成，无缝衔接）
+        print("[diag] 提示音已循环播放 len =", snd.get_length())
+    except (ValueError, TypeError) as e:
+        print("[diag] 音频初始化失败（继续无音频运行）:", e)
 
     # ── 静态表面：全部创建一次 ──
     tile = pygame.Surface((40, 40))
@@ -200,6 +198,46 @@ def game():
         _st("withbatch.direct", True)
     except Exception as _e:
         _st("withbatch.direct", False); print("    [selftest] 异常:", _e)
+    # draw 族 FromArgs 收参契约（原 sig_probe 全局探针面迁入——真会话内
+    # 验证：正路径各形态全绑定执行；负路径参数层先于会话执行拒绝）
+    try:
+        with screen.render() as r:
+            r.rect((0, 200, 90), (10, 20, 30, 40))                     # 3 元色 + width 缺省
+            r.rect(color=(0, 200, 90, 255), rect=(1, 2, 3, 4), width=4)  # kwargs 全形态
+            r.circle((255, 200, 0), (5, 6), 7)                         # width 缺省
+            r.line((200, 60, 60), (0, 0), (9, 9), 2)                   # width 显式
+            r.polygon((90, 120, 220), [(1, 2), (3, 4), (5, 6)])        # 嵌套点列
+            r.polygon((10, 20, 30), ((1, 2), (3, 4)))                  # tuple 点列
+            r.ellipse((0, 200, 90), (10, 20, 30, 40))                  # width 缺省
+            r.ellipse((0, 200, 90), (1, 2, 3, 4), 2)                   # width 显式
+            r.arc((200, 60, 60), (10, 20, 30, 40), 0.0, 1.5)           # 弧度制
+            r.arc((200, 60, 60), (1, 2, 3, 4), 0, 1)                   # 弧度兼容 int
+            r.rect((0, 200, 90), pygame.Rect(1, 2, 3, 4))              # Rect 实例直通
+        _ok = True
+    except Exception as _e:
+        _ok = False; print("    [selftest] 异常:", _e)
+    _st("draw.positive", _ok)
+    # 负路径：参数层拒绝（TypeError——缺参/越界/非 int/未知 kwarg/点长度错）
+    try:
+        with screen.render() as r:
+            _bad_calls = (
+                lambda: r.rect((0, 200), (0, 0, 1, 1)),            # 颜色分量不足
+                lambda: r.rect((300, 0, 0), (0, 0, 1, 1)),         # 颜色越界
+                lambda: r.rect((0, 0, 0), (1.5, 0, 1, 1)),         # rect 分量 float 严格拒
+                lambda: r.rect((0, 0, 0)),                         # 缺 rect（必填 any）
+                lambda: r.polygon((0, 0, 0), [(1, 2), (3,)]),      # 点长度错
+                lambda: r.rect((0, 0, 0), (0, 0, 1, 1), bogus=1),  # 未知 kwarg
+                lambda: r.arc((200, 60, 60), (10, 20, 30, 40)),    # 缺起止角
+            )
+            _rejected = 0
+            for _bad in _bad_calls:
+                try:
+                    _bad()
+                except TypeError:
+                    _rejected += 1
+        _st("draw.negative", _rejected == len(_bad_calls))
+    except Exception as _e:
+        _st("draw.negative", False); print("    [selftest] 异常:", _e)
     # event poll/clear + KMOD 常量
     _pe = pygame.event.poll()
     _st("event.poll", _pe is None or hasattr(_pe, "type"))
@@ -213,18 +251,11 @@ def game():
         for e in pygame.event.get():
             if e.type == pygame.event.QUIT:
                 return
-            # 仅 Web 会进入（原生平台 snd 已就绪，None 守卫恒假）：
-            # 首次按键/点击 = 用户手势，AudioContext 解锁点
-            if e.type in (pygame.event.KEYDOWN, pygame.event.MOUSEBUTTONDOWN) and snd is None:
-                snd = pygame.mixer.Sound()
-                snd.play(-1)
-                print("[diag] Web 手势解锁：提示音开始循环播放 len =",
-                      snd.get_length(), "busy =", pygame.mixer.get_busy())
             # touch 诊断（批次 I）：移动端点按/滑动可看手指表联动
             # （桌面恒 0——引擎仅移动端产生 Touch 事件）
             if e.type == pygame.event.MOUSEBUTTONDOWN:
                 print("[diag] tap: touch 手指数 =", pygame.touch.get_count())
-            if e.type == pygame.event.KEYDOWN and e.key == pygame.event.K_ESCAPE:
+            if e.type == pygame.event.KEYDOWN and e.key == pygame.key.K_ESCAPE:
                 return
 
         

@@ -50,16 +50,48 @@ CANVAS_TEMPLATE = """<!DOCTYPE html>
   html, body {{ margin: 0; height: 100%; background: #000;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center; }}
-  canvas {{ outline: none; }}
+  /* ── 窗口大小控制（页面即权威，开发者在此调整）──
+     canvas 占多大（CSS），渲染就是多大：引擎经 ResizeObserver 感知
+     布局变化并自动同步位图（位图 = CSS 布局 1:1）+ 触发 rescale。
+     默认 800×600（与桌面 set_mode 一致）。常用改法：
+       • 铺满视口：width: 92vw; height: 86vh;
+       • 跟随窗口：width: 100%; height: 100%（父级需有尺寸）
+     运行时改大小见下方 <script> 里的 setGameSize 助手（默认注释，
+     按需启用）。screen.get_size() 可在脚本里查询当前渲染尺寸。 */
+  canvas {{ outline: none; width: 800px; height: 600px; }}
   p {{ color: #888; font: 13px/1.6 sans-serif; margin: 8px 0 0; }}
+  #start-overlay {{ position: fixed; inset: 0; background: rgba(0,0,0,.88);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 10; }}
+  #start-btn {{ padding: 14px 42px; font: 16px/1 sans-serif;
+    color: #eee; background: #222; border: 1px solid #555;
+    border-radius: 8px; cursor: pointer; }}
+  #start-btn:hover {{ background: #333; border-color: #888; }}
 </style>
 </head>
 <body>
-<canvas id="starfish-window" width="800" height="600"></canvas>
+<canvas id="starfish-we"></canvas>
 <p>【pygame-rs】{caption}</p>
+<div id="start-overlay"><button id="start-btn">▶ 点击启动</button></div>
 <script type="module">
 import init from './{name}.js?v={build_ts}';
-init().catch(e => {{ document.body.textContent = 'wasm 加载失败: ' + e; console.error(e); }});
+// 点击启动 = 浏览器自动播放策略的部署约定：wasm（含 AudioContext
+// 创建）整体落在首次用户手势调用栈之后，三平台行为一致
+document.getElementById('start-btn').addEventListener('click', () => {{
+  document.getElementById('start-overlay').remove();
+  init().catch(e => {{ document.body.textContent = 'wasm 加载失败: ' + e; console.error(e); }});
+}});
+
+// ── 窗口大小控制（运行时）——按需取消注释启用 ──────────────────
+// canvas 占多大（CSS）渲染就多大：改 style 后引擎经 ResizeObserver
+// 自动同步位图并 rescale（screen.get_size() 可在脚本里查询当前尺寸）。
+// window.setGameSize = (w, h) => {{
+//   const c = document.getElementById('starfish-we');
+//   c.style.width = w + 'px';
+//   c.style.height = h + 'px';
+// }};
+// 用法（页面控制台或你的 JS 里）：setGameSize(1024, 768)
+// 也可在游戏脚本侧配合：screen.get_size() 读取当前渲染尺寸做自适应。
 </script>
 </body>
 </html>
@@ -74,6 +106,13 @@ CONSOLE_TEMPLATE = """<!DOCTYPE html>
   html, body {{ margin: 0; height: 100%; background: #000; color: #ccc;
     font: 14px/1.7 monospace; display: flex; flex-direction: column;
     align-items: center; justify-content: center; text-align: center; }}
+  #start-overlay {{ position: fixed; inset: 0; background: rgba(0,0,0,.88);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 10; }}
+  #start-btn {{ padding: 14px 42px; font: 16px/1 monospace;
+    color: #eee; background: #222; border: 1px solid #555;
+    border-radius: 8px; cursor: pointer; }}
+  #start-btn:hover {{ background: #333; border-color: #888; }}
 </style>
 </head>
 <body>
@@ -81,9 +120,14 @@ CONSOLE_TEMPLATE = """<!DOCTYPE html>
   <p>【pygame-rs】{caption}</p>
   <p>输出在浏览器控制台：<b>F12 → Console</b>（Rust print 重定向到 console）</p>
 </div>
+<div id="start-overlay"><button id="start-btn">▶ 点击启动</button></div>
 <script type="module">
 import init from './{name}.js?v={build_ts}';
-init().catch(e => {{ document.body.textContent = 'wasm 加载失败: ' + e; console.error(e); }});
+// 点击启动 = 浏览器自动播放策略的部署约定（同 canvas 页）
+document.getElementById('start-btn').addEventListener('click', () => {{
+  document.getElementById('start-overlay').remove();
+  init().catch(e => {{ document.body.textContent = 'wasm 加载失败: ' + e; console.error(e); }});
+}});
 </script>
 </body>
 </html>

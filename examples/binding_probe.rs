@@ -138,7 +138,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     match std::fs::read("Canterbury.ttf") {
         Ok(b) => {
-            rpy::bridge::font_cache_set("canterbury", b);
+            starfish::pygame::font::preload("canterbury", b);
             dlog("[binding_probe] Canterbury 已预载（哥特风演示）");
         }
         Err(_) => dlog("[binding_probe] Canterbury.ttf 未找到（跳过）"),
@@ -146,26 +146,26 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     match std::fs::read("C:/Windows/Fonts/msyh.ttc") {
         Ok(b) => {
-            rpy::bridge::font_cache_set("cjk", b);
+            starfish::pygame::font::preload("cjk", b);
             dlog("[binding_probe] CJK 字体已预载（系统 msyh.ttc）");
         }
         Err(_) => dlog("[binding_probe] CJK 预载失败（msyh.ttc 不存在）"),
     }
     match starfish::base::io::read("fonts/cjk.ttf").await {
         Ok(b) => {
-            rpy::bridge::font_cache_set("cjk", b);
+            starfish::pygame::font::preload("cjk", b);
             dlog("[binding_probe] CJK 字体已预载（fonts/cjk.ttf）");
         }
         Err(_) => dlog("[binding_probe] CJK 字体未找到（fonts/cjk.ttf，中文将缺字）"),
     }
 
     // Android：字体字节由开局的 cjk_thread 后台预读（与 set_mode/genesis
-    // 重叠）——此处 join 并入缓存（cache set 在主线程，font_cache 非并发）。
+    // 重叠）——此处 join 并入缓存（preload 在主线程，缓存非并发）。
     #[cfg(target_os = "android")]
     if let Ok(joined) = cjk_thread.join() {
         match joined {
             Some((p, b)) => {
-                rpy::bridge::font_cache_set("cjk", b);
+                starfish::pygame::font::preload("cjk", b);
                 stage(&format!("CJK 字体已预载（系统 {p}）"));
             }
             None => dlog("[binding_probe] CJK 系统字体候选全 miss（中文将缺字）"),
@@ -187,7 +187,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     interp.enter(|vm| {
         let run = || -> Result<(), String> {
             let scope = vm.new_scope_with_builtins();
-            rpy::bridge::register(vm, &scope);
             rpy::install_pygame(vm);
             dlog("[binding_probe] pygame 原生模块已注入");
             stage("原生模块注入完成");
@@ -260,7 +259,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut frames: u32 = 0;
 
     loop {
-        if rpy::bridge::pump() {
+        if starfish::pygame::event::pump() {
             dlog("[binding_probe] 退出请求，结束");
             break;
         }
@@ -297,13 +296,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             ));
         }
 
-        rpy::bridge::audio_pump();  // Web 流式解码驱动（桌面 no-op）
+        starfish::pygame::mixer::pump();  // Web 流式解码驱动（桌面 no-op）
         next_frame().await;
     }
     // 先关窗再卸载（避免 RP 卸载期间窗口 ghost 无响应）；
     // 音频混音器显式收口（cpal 流不留到主线程 TLS 析构期）
     display::quit();
-    rpy::bridge::mixer_quit();
+    starfish::pygame::mixer::quit();
     dlog("[binding_probe] main loop ended");
     Ok(())
 }

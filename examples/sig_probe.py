@@ -1,12 +1,9 @@
-# sig_probe 脚本（签名契约锚点，批次 A/B）：draw 族 FromArgs 收参 +
-# 原生 pygame 模块路径的可执行规格——正路径各形态绑定通过、负路径参数层
-# 拒绝、模块树/常量/Color/事件全部在此锁定。
+# sig_probe 脚本（签名契约锚点，批次 A/B）：原生 pygame 模块路径的
+# 可执行规格——模块树/常量/Color/事件全部在此锁定。
 #
-# 判定原理（无头、零窗口/GPU）：绘制调用绑定成功后必然撞 with_session
-# 的"会话外"报错（文案固定含"会话内调用"）= 绑定通过；参数层错误
-# （缺参/越界/非 int/未知 kwarg）在绑定阶段先拒绝，文案不同。
-# sf_draw_fill / screen.render / screen.fill 触碰 get_screen()，无头不测
-# （桌面 binding_probe 覆盖）。
+# draw 族 FromArgs 收参（正路径各形态 + 负路径参数层拒绝）已迁往
+# binding_probe.py——真会话内验证（原全局探针面 sf_draw_* 随 bridge
+# 瘦身退役，2026-10-18）。
 
 RESULTS = []
 
@@ -15,48 +12,6 @@ def expect(cond, msg):
     """布尔断言（模块路径用）。"""
     RESULTS.append(("OK", msg) if cond else ("FAIL", msg))
 
-
-def expect_binding(fn_name, should_bind, *a, **k):
-    """should_bind=True 期望绑定通过（撞会话外报错）；False 期望参数层拒绝。"""
-    try:
-        globals()[fn_name](*a, **k)
-        RESULTS.append(("FAIL", "%s: 无异常" % fn_name))
-    except TypeError as e:
-        msg = str(e)
-        if "会话内调用" in msg:
-            if should_bind:
-                RESULTS.append(("OK", "%s 绑定通过" % fn_name))
-            else:
-                RESULTS.append(("FAIL", "%s 应被参数层拒绝，却通过了绑定" % fn_name))
-        elif should_bind:
-            RESULTS.append(("FAIL", "%s 意外文案: %s" % (fn_name, msg)))
-        else:
-            RESULTS.append(("OK", "%s 拒绝: %s" % (fn_name, msg)))
-    except Exception as e:  # 非 TypeError = 契约破坏（缺参本应报 TypeError）
-        RESULTS.append(("FAIL", "%s 非 TypeError: %r" % (fn_name, e)))
-
-
-# ── 正路径：位置 / kwargs / 3 元色 / 嵌套点列 ────────────────────
-expect_binding("sf_draw_rect", True, (0, 200, 90), (10, 20, 30, 40))          # 3 元色 + width 缺省
-expect_binding("sf_draw_rect", True, color=(0, 200, 90, 255),
-               rect=(1, 2, 3, 4), width=4)                                    # kwargs 全形态
-expect_binding("sf_draw_circle", True, (255, 200, 0), (5, 6), 7)              # width 缺省
-expect_binding("sf_draw_line", True, (200, 60, 60), (0, 0), (9, 9), 2)        # width 显式
-expect_binding("sf_draw_polygon", True, (90, 120, 220), [(1, 2), (3, 4), (5, 6)])
-expect_binding("sf_draw_polygon", True, (10, 20, 30), ((1, 2), (3, 4)))       # tuple 点列
-expect_binding("sf_draw_ellipse", True, (0, 200, 90), (10, 20, 30, 40))       # width 缺省
-expect_binding("sf_draw_ellipse", True, (0, 200, 90), (1, 2, 3, 4), 2)        # width 显式
-expect_binding("sf_draw_arc", True, (200, 60, 60), (10, 20, 30, 40), 0.0, 1.5)  # 弧度制
-expect_binding("sf_draw_arc", True, (200, 60, 60), (1, 2, 3, 4), 0, 1)        # 弧度兼容 int
-expect_binding("sf_draw_arc", False, (200, 60, 60), (10, 20, 30, 40))         # 缺起止角
-
-# ── 负路径：参数层拒绝 ──────────────────────────────────────────
-expect_binding("sf_draw_rect", False, (0, 200), (0, 0, 1, 1))                 # 颜色分量不足
-expect_binding("sf_draw_rect", False, (300, 0, 0), (0, 0, 1, 1))              # 颜色越界
-expect_binding("sf_draw_rect", False, (0, 0, 0), (1.5, 0, 1, 1))              # float 严格拒
-expect_binding("sf_draw_rect", False, (0, 0, 0))                              # 缺 rect（必填 any）
-expect_binding("sf_draw_polygon", False, (0, 0, 0), [(1, 2), (3,)])           # 点长度错
-expect_binding("sf_draw_rect", False, (0, 0, 0), (0, 0, 1, 1), bogus=1)       # 未知 kwarg
 
 # ── 原生 pygame 模块路径（批次 B：pymodule 树 + pyclass）────────
 import pygame
@@ -98,7 +53,6 @@ expect(r2.left == 6 and r2.top == 22 and r1.left == 5, "move 返回新 Rect（�
 expect(r1.collidepoint((6, 22)) and not r1.collidepoint((999, 999)), "collidepoint")
 expect(r1.colliderect(pygame.Rect(0, 0, 100, 100)), "colliderect")
 expect(not r1.contains(pygame.Rect(0, 0, 100, 100)), "contains 反例")
-expect_binding("sf_draw_rect", True, (0, 200, 90), pygame.Rect(1, 2, 3, 4))  # Rect 直通 draw
 
 # ── Key：typed 键值（批次 C）────────────────────────────────────
 expect(type(pygame.key.K_a).__name__ == "Key", "K_* typed（Key 实例）")

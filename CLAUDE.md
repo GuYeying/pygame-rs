@@ -86,13 +86,34 @@ RustPython 解释器 + pygame 绑定面。引擎本体在**同级目录** `../st
   约束下方法面三处镜像）；args 新增 `SfFPoint/SfFPoints`（f32 宽收，
   ArgIntoFloat 路径——角点亚像素坐标）；`push_geometry` 暂缓（需
   Python 侧 Geometry 构建器，随 v2 静态网格立项）。
+- **批次 41（2026-10-18）：bridge 瘦身七步——状态归属移交 starfish**：
+  架构原则定约——**行为一致为准**（绑定层与引擎 Rust 用户同一套行为）、
+  bridge 只留"提供状态 + debug"的 RP 薄壳（错误映射/收参/downcast）、
+  **禁为兼容在 bridge 造新接口**（starfish 接口形态不满意就去 starfish
+  改；screen 进程唯一是例外）、example 可重写。落地：①活跃会话 →
+  starfish `render::session`（双槽 + MRT 保活表收回引擎 +
+  `NoActiveSession`）；②混音器 → starfish `pygame::mixer`（生命周期 +
+  Web 手势门 + `beep()` + pump）；③事件 → `pygame::event` 队列化
+  （SDL 模型 `pump()` 灌队列返 Quit，get/poll/clear 消费同队列；
+  **ESC 退出语义归脚本**——宿主壳只认窗口关闭）；④字体预载 →
+  `font::preload/preloaded`；⑤`DrawTarget::blit_area/push_points/
+  push_points_indexed` default method（引擎版 blit_area 补齐源面
+  flush 保险）。`sf_draw_*` 七件全局 + register + bridge 全部
+  thread-local 引擎状态退役——**bridge 691→293 行**。顺带修复
+  PySurface.fill/blit 注释遗留（selftest 复活 2 项）；sig_probe 的
+  draw 族收参断言迁入 binding_probe 真会话（draw.positive/negative）。
+  **同批定约修订：Web 自动播放策略改部署约定**——运行时手势门整体
+  撤除（API 面 `pygame.mixer.needs_gesture()` 移除），build_web.py
+  模板内建"▶ 点击启动"覆盖层兜底，三平台同代码。
 - **逐模块独立测试阶段**（进行中）：共享宿主壳 `rpy::testhost::run(
-  script, tag)`（set_mode/铺底/CJK 三平台预载/装配/事件泵/帧循环/收口
-  固化），每模块一个 `examples/<模块>_test.rs + .py`（[模块-test] 行
+  script, tag, transparent)`（set_mode/铺底/CJK 三平台预载/装配/事件泵
+  （`event::pump` 直调）/帧循环/收口固化），每模块一个
+  `examples/<模块>_test.rs + .py`（[模块-test] 行
   逐项断言 + 样张上屏；双注册 `<模块>_test` + `<模块>_test_android`，
-  build_web.py REGISTRY 加窗口类条目）。已完成：font_test（11 项断言
+  build_web.py REGISTRY 加窗口类条目）。已完成：font_test（15 项断言
   ——Font 构造**双参定约**：单参在参数层 TypeError，坏字节 ValueError
-  需带 size）。binding_probe / sig_probe 保留不动。
+  需带 size）、transparent_test（桌宠形态三端）、draw_test（七项含
+  vertices/geometry/gfxdraw）。binding_probe / sig_probe 保留不动。
   进度主线见 `src/lib.rs` 顶部注释与 `../starfish/doc/PROJECT_STATUS.md`。
 
 ## 常用命令
@@ -122,6 +143,14 @@ Web：`wasm-bindgen-cli` 版本必须与 Cargo.lock 严格一致（当前 0.2.12
 （wasm32 构建 + 胶水 + HTML 加载页，产物落本仓库 `web/`；`--all` 全量；
 页面带【pygame-rs】归属标识）**——归属规则：pygame-rs 的 demo 产物只进
 pygame-rs/web/，starfish 示例的进 starfish/web/，两边不混放。
+**Web 窗口大小控制**（页面即权威，开发者自行调整）：canvas 占多大
+（CSS）渲染就是多大——位图 = CSS 布局 1:1，dpr 不进引擎。产物页默认
+`800×600`（与桌面 `set_mode` 一致）；改产物 HTML 里 canvas 的 CSS
+宽高（如 `92vw/86vh` 铺满）、运行时改 `canvas.style`，或启用产物
+script 里注释好的 `setGameSize(w, h)` 助手——引擎经 ResizeObserver
+感知布局变化自动同步位图 + rescale。浏览器缩放（Ctrl+滚轮）是纯视图
+变换（canvas 与页面一起缩放，渲染零扰动）。`screen.get_size()` 查询
+当前渲染尺寸。
 构建 + 胶水 + 本地服务流程详见 `reference/wasm编译与运行指南.md`。
 
 ## 架构
@@ -141,9 +170,9 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     宿主壳在 interp.enter 内调用，勿放 init_hook；方法实现层拆分在
     src/rpy/pygame_impls.rs（impl 块与 struct 分离可行，同 crate 内合法；
     ⚠️ 同类型仅允许一个 #[pyclass] impl 块——跨文件第二个会 E0119）
-    → sf_* / args（src/rpy/bridge.rs 引擎桥 + src/rpy/args.rs 收参层：
-      draw 族 FromArgs 结构体收参 + 序列整形；bridge 全局 = sig_probe
-      契约面）
+    → sf_* / args（src/rpy/bridge.rs 引擎桥——纯 RP 薄壳：会话/混音器
+      错误映射 + with_batch 收参壳 + devlog，批次 41 后零引擎状态；
+      src/rpy/args.rs 收参层：draw 族 FromArgs 结构体收参 + 序列整形）
       → starfish::pygame 兼容层（display/draw/event/time/rect/color/render）
         → starfish::base 引擎（wgpu + 自研 starfish-window）
 ```
@@ -186,15 +215,18 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   （Font(None) 惯例延续）/ 路径 / bytes 三构造（starfish
   `SoundData::from_bytes`）；`play(loops)/stop/set_volume/get_length`；
   `mixer.music.load/load_bytes/play/stop/...`（starfish
-  `music_load_bytes`）；**混音器在 bridge thread-local 保活（Drop 即停）**；
-  **Web 每帧须 `bridge::audio_pump()`**（无解码线程）；**Web 音频手势
-  定约**（浏览器自动播放策略）：`pygame.mixer.needs_gesture()` 暴露平台
-  差异（cfg 判定，Web=True）——原生平台直接创建播放，Web 由脚本延后到
-  首次手势（keydown/mousedown 均 User Activation）；**手势前的 play 类
-  调用一律跳过**（不排队、静默丢弃；挡在 with_mixer 前——不建混音器/
-  AudioContext/不占通道，debug 构建打一条日志）；首个手势经
-  `bridge::pump()` 置位并 resume 已存在的 suspended ctx（兜显式 init
-  提前的场景）；通道索引停止后回收复用；
+  `music_load_bytes`）；**混音器生命周期在 starfish `pygame::mixer`
+  （批次 41 收编）**——thread-local 保活（Drop 即停）+ `with` 惰性
+  8 通道（bridge::with_mixer 只剩 AudioError→ValueError 映射）；
+  **Web 每帧须 `starfish::pygame::mixer::pump()`**（无解码线程；宿主壳
+  帧循环调用）；**Web 自动播放策略 = 部署约定**（2026-10-18 批次 41
+  修订——原运行时手势门整体撤除：`needs_gesture()` API、play 类
+  调用前跳过检查、事件泵手势标记全删）。浏览器要求 AudioContext 创建
+  落在用户手势调用栈内，由**宿主页面保证首次手势先行**：build_web.py
+  模板内建"▶ 点击启动"覆盖层（wasm 启动挂进 click 回调，产物天然
+  合规）；嵌入页场景必然先点击；独立页自行用 html+js+css 挡一层。
+  三平台行为一致：音频随时可播，无钩子、无跳过路径；通道索引停止后
+  回收复用；
 - **Surface/transform/image（批次 F+，GPU 直通定约）**：
   `pygame.Surface((w,h))` pyclass（starfish Surface owned payload；构造/
   使用须在 display init 后——GPU 槽约束，与真 pygame 差异）；

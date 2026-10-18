@@ -545,12 +545,8 @@ pub(crate) struct PlayArgs {
 impl PySound {
     /// play(loops=0)：-1 无限 / 0 单次 / N 次；记录通道供 stop/音量定位
     /// （通道索引停止后会被回收复用——starfish 通道模型固有限制）。
-    /// Web 手势前调用被跳过（不排队，见 bridge::audio_gesture_locked）
     #[pymethod]
     fn play(&self, args: PlayArgs, vm: &VirtualMachine) -> PyResult<()> {
-        if bridge::audio_gesture_locked() {
-            return Ok(());
-        }
         let ch = bridge::with_mixer(vm, |m| {
             m.play_with(self.data.clone(), args.loops.unwrap_or(0))
                 .map_err(|e| vm.new_value_error(format!("音频错误: {e:?}")))
@@ -650,28 +646,25 @@ impl PySurface {
         self.surface.alpha()
     }
 
-    // #[pymethod]
-    // fn fill(&self, color: SfColor, vm: &VirtualMachine) -> PyResult<PyRef<PyRect>> {
-    //     let r = self
-    //         .surface
-    //         .fill([color.0[0], color.0[1], color.0[2], color.0[3]]);
-    //     Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx))
-    // }
+    /// fill(color) -> Rect：整面填充（DrawTarget 直通）
+    #[pymethod]
+    fn fill(&self, color: SfColor, vm: &VirtualMachine) -> PyResult<PyRef<PyRect>> {
+        let r = DrawTarget::fill(&*self.surface, [color.0[0], color.0[1], color.0[2], color.0[3]]);
+        Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx))
+    }
 
     /// blit(src, dest) -> Rect：Surface 贴图（self-blit 会 panic——
     /// starfish assert_not_self，文档标注）
-    // #[pymethod]
-    // fn blit(
-    //     &self,
-    //     src: PyRef<PySurface>,
-    //     dest: SfPoint,
-    //     vm: &VirtualMachine,
-    // ) -> PyResult<PyRef<PyRect>> {
-    //     let r = self
-    //         .surface
-    //         .blit(&src.surface, (dest.0, dest.1));
-    //     Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx))
-    // }
+    #[pymethod]
+    fn blit(
+        &self,
+        src: PyRef<PySurface>,
+        dest: SfPoint,
+        vm: &VirtualMachine,
+    ) -> PyResult<PyRef<PyRect>> {
+        let r = DrawTarget::blit(&*self.surface, &src.surface, (dest.0, dest.1));
+        Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx))
+    }
 
     /// get_rect() -> Rect(0, 0, w, h)：尺寸矩形（批次 C 复用）
     #[pymethod]

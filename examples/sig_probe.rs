@@ -1,8 +1,8 @@
 //! sig_probe：绑定面签名契约锚点（批次 A，无头——零窗口/GPU 依赖）。
 //!
-//! draw 族 FromArgs 收参的可执行规格：正路径各形态（位置/kwargs/缺省值/
-//! 序列整形）与负路径（缺参/越界/非 int/未知 kwarg）在 `sig_probe.py`
-//! 锁定——签名回归先跑本探针，再上真机批次。
+//! 原生 pygame 模块路径的可执行规格（模块树/常量/Color/Rect/Key/math/
+//! mixer 度量面等）在 `sig_probe.py` 锁定——签名回归先跑本探针，再上
+//! 真机批次。draw 族 FromArgs 收参需真会话，由 binding_probe 覆盖。
 //!
 //! 运行：`cargo run -p pygame-rs --example sig_probe`
 //! 预期：`[sig_probe] PASS`；Exit 1 = 契约破坏。
@@ -13,7 +13,6 @@ fn main() {
     let interp = rpy::new_interpreter();
     let err = interp.enter(|vm| -> Option<String> {
         let scope = vm.new_scope_with_builtins();
-        rpy::bridge::register(vm, &scope);
         rpy::install_pygame(vm); // 原生 pygame 模块注入（enter 内，脚本前）
         let code = vm
             .compile(
@@ -34,7 +33,7 @@ fn main() {
         None
     });
     // 显式收口音频混音器（留到主线程 TLS 析构期 Drop cpal 流会崩）
-    rpy::bridge::mixer_quit();
+    starfish::pygame::mixer::quit();
     match err {
         Some(msg) => {
             println!("[sig_probe] FAIL: {msg}");

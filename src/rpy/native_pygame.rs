@@ -183,7 +183,7 @@ pub(crate) mod pygame {
         fn rect(&self, args: args::DrawRectArgs, vm: &VirtualMachine) -> PyResult<()> {
             starfish::pygame::draw::rect(
                 &*self.surface,
-                bridge::color_of(args.color),
+                args.color.0,
                 starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                 args.width.unwrap_or(0).max(0) as u32,
             );
@@ -194,7 +194,7 @@ pub(crate) mod pygame {
         fn circle(&self, args: args::DrawCircleArgs, vm: &VirtualMachine) -> PyResult<()> {
             starfish::pygame::draw::circle(
                 &*self.surface,
-                bridge::color_of(args.color),
+                args.color.0,
                 (args.center.0, args.center.1),
                 args.radius.max(0) as u32,
                 args.width.unwrap_or(0).max(0) as u32,
@@ -206,7 +206,7 @@ pub(crate) mod pygame {
         fn line(&self, args: args::DrawLineArgs, vm: &VirtualMachine) -> PyResult<()> {
             starfish::pygame::draw::line(
                 &*self.surface,
-                bridge::color_of(args.color),
+                args.color.0,
                 (args.start.0, args.start.1),
                 (args.end.0, args.end.1),
                 args.width.unwrap_or(1).max(1) as u32,
@@ -218,7 +218,7 @@ pub(crate) mod pygame {
         fn polygon(&self, args: args::DrawPolygonArgs, vm: &VirtualMachine) -> PyResult<()> {
             starfish::pygame::draw::polygon(
                 &*self.surface,
-                bridge::color_of(args.color),
+                args.color.0,
                 &args.points.0,
                 args.width.unwrap_or(0).max(0) as u32,
             );
@@ -229,7 +229,7 @@ pub(crate) mod pygame {
         fn ellipse(&self, args: args::DrawEllipseArgs, vm: &VirtualMachine) -> PyResult<()> {
             starfish::pygame::draw::ellipse(
                 &*self.surface,
-                bridge::color_of(args.color),
+                args.color.0,
                 starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                 args.width.unwrap_or(0).max(0) as u32,
             );
@@ -240,7 +240,7 @@ pub(crate) mod pygame {
         fn arc(&self, args: args::DrawArcArgs, vm: &VirtualMachine) -> PyResult<()> {
             starfish::pygame::draw::arc(
                 &*self.surface,
-                bridge::color_of(args.color),
+                args.color.0,
                 starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                 args.start_angle.into_float() as f32,
                 args.stop_angle.into_float() as f32,
@@ -339,8 +339,15 @@ pub(crate) mod pygame {
         /// ADR-5 with 会话入口：进入 = 开启 RenderPass，退出 = finish 打包。
         #[pymethod]
         fn render(&self, vm: &VirtualMachine) -> PyResult<PyRef<PyScreenSession>> {
-            bridge::session_begin();
+            starfish::pygame::render::session::begin_screen();
             Ok(PyScreenSession.into_ref(&vm.ctx))
+        }
+
+        /// get_size() -> (w, h)：当前窗口/渲染表面尺寸（Web 响应式
+        /// canvas 下跟随页面布局变化——脚本查询用）
+        #[pymethod]
+        fn get_size(&self) -> (u32, u32) {
+            starfish::pygame::display::get_screen().size()
         }
 
         /// 深度会话（v1.1：Surface 创建整合 depth_buffer 后启用，架构 §九）。
@@ -376,49 +383,99 @@ pub(crate) mod pygame {
         /// 异常不吞（返回 False 交回宿主壳打印收口）。
         #[pymethod]
         fn __exit__(&self, _exc_info: FuncArgs) -> bool {
-            bridge::session_end();
+            starfish::pygame::render::session::end_screen();
             false
         }
 
         #[pymethod]
-        fn fill(&self, args: FillArgs, vm: &VirtualMachine) -> PyResult<()> {
-            bridge::sf_draw_fill(args, vm)
+        fn fill(&self, args: FillArgs, _vm: &VirtualMachine) -> PyResult<()> {
+            // Screen 例外：全局屏填充不经会话（get_screen 进程唯一）
+            starfish::pygame::display::get_screen().fill(args.color.0);
+            Ok(())
         }
 
         #[pymethod]
         fn rect(&self, args: args::DrawRectArgs, vm: &VirtualMachine) -> PyResult<()> {
-            bridge::sf_draw_rect(args, vm)
+            let width = args.width.unwrap_or(0).max(0) as u32;
+            bridge::with_session(vm, |t| {
+                starfish::pygame::draw::rect(
+                    t,
+                    args.color.0,
+                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    width,
+                );
+            })
         }
 
         #[pymethod]
         fn circle(&self, args: args::DrawCircleArgs, vm: &VirtualMachine) -> PyResult<()> {
-            bridge::sf_draw_circle(args, vm)
+            let radius = args.radius.max(0) as u32;
+            let width = args.width.unwrap_or(0).max(0) as u32;
+            bridge::with_session(vm, |t| {
+                starfish::pygame::draw::circle(
+                    t,
+                    args.color.0,
+                    (args.center.0, args.center.1),
+                    radius,
+                    width,
+                );
+            })
         }
 
         #[pymethod]
         fn line(&self, args: args::DrawLineArgs, vm: &VirtualMachine) -> PyResult<()> {
-            bridge::sf_draw_line(args, vm)
+            let width = args.width.unwrap_or(1).max(1) as u32;
+            bridge::with_session(vm, |t| {
+                starfish::pygame::draw::line(
+                    t,
+                    args.color.0,
+                    (args.start.0, args.start.1),
+                    (args.end.0, args.end.1),
+                    width,
+                );
+            })
         }
 
         #[pymethod]
         fn polygon(&self, args: args::DrawPolygonArgs, vm: &VirtualMachine) -> PyResult<()> {
-            bridge::sf_draw_polygon(args, vm)
+            let width = args.width.unwrap_or(0).max(0) as u32;
+            bridge::with_session(vm, |t| {
+                starfish::pygame::draw::polygon(t, args.color.0, &args.points.0, width);
+            })
         }
 
         #[pymethod]
         fn ellipse(&self, args: args::DrawEllipseArgs, vm: &VirtualMachine) -> PyResult<()> {
-            bridge::sf_draw_ellipse(args, vm)
+            let width = args.width.unwrap_or(0).max(0) as u32;
+            bridge::with_session(vm, |t| {
+                starfish::pygame::draw::ellipse(
+                    t,
+                    args.color.0,
+                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    width,
+                );
+            })
         }
 
         #[pymethod]
         fn arc(&self, args: args::DrawArcArgs, vm: &VirtualMachine) -> PyResult<()> {
-            bridge::sf_draw_arc(args, vm)
+            let width = args.width.unwrap_or(1).max(1) as u32;
+            bridge::with_session(vm, |t| {
+                starfish::pygame::draw::arc(
+                    t,
+                    args.color.0,
+                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    args.start_angle.into_float() as f32,
+                    args.stop_angle.into_float() as f32,
+                    width,
+                );
+            })
         }
 
         /// blit(src, dest) -> Rect：Surface 贴入会话（批次 F）
         #[pymethod]
         fn blit(&self, src: PyRef<PySurface>, dest: args::SfPoint, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-            let rect = bridge::session_blit(&src.surface, (dest.0, dest.1), vm)?;
+            let rect = bridge::with_session(vm, |t| t.blit(&src.surface, (dest.0, dest.1)))?;
             Ok(PyRect(Cell::new(rect)).into_ref(&vm.ctx).into())
         }
 
@@ -473,7 +530,7 @@ pub(crate) mod pygame {
             let surface = font
                 .inner
                 .render(t, true, [color.0[0], color.0[1], color.0[2], color.0[3]]);
-            let rect = bridge::session_blit(&surface, (dest.0, dest.1), vm)?;
+            let rect = bridge::with_session(vm, |t| t.blit(&surface, (dest.0, dest.1)))?;
             Ok(PyRect(Cell::new(rect)).into_ref(&vm.ctx).into())
         }
     }
@@ -794,10 +851,11 @@ pub(crate) mod pygame {
             }
         }
 
-        /// 排空事件队列（原生层 pump 每帧灌入；引擎事件 → PyEvent 映射同源）。
+        /// 排空事件队列（引擎 event::pump 每帧灌入；引擎事件 → PyEvent
+        /// 映射同源）。
         #[pyfunction]
         fn get(vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-            let items: Vec<PyObjectRef> = bridge::drain_events()
+            let items: Vec<PyObjectRef> = starfish::pygame::event::get()
                 .into_iter()
                 .map(|ev| PyEvent::from_engine(vm, ev).into_pyobject(vm))
                 .collect();
@@ -808,14 +866,14 @@ pub(crate) mod pygame {
         /// 与 get() 的"全量排空"互补）。
         #[pyfunction]
         fn poll(vm: &VirtualMachine) -> PyResult<Option<PyObjectRef>> {
-            Ok(bridge::poll_event()
+            Ok(starfish::pygame::event::poll()
                 .map(|ev| PyEvent::from_engine(vm, ev).into_pyobject(vm)))
         }
 
         /// clear()：清空事件队列。
         #[pyfunction]
         fn clear(_vm: &VirtualMachine) {
-            bridge::clear_events();
+            starfish::pygame::event::clear();
         }
     }
 
@@ -988,7 +1046,7 @@ pub(crate) mod pygame {
             // 字体缓存名 → 字节（宿主 io 预加载命中）或磁盘路径（非 wasm）
             let resolve_by_name =
                 |name: &str, vm: &VirtualMachine| -> PyResult<Option<sf_font::Font>> {
-                    if let Some(bytes) = bridge::font_cache_get(name) {
+                    if let Some(bytes) = sf_font::preloaded(name) {
                         return sf_font::Font::from_bytes(bytes, size)
                             .map(Some)
                             .map_err(|e| fail(vm, e));
@@ -1089,29 +1147,20 @@ pub(crate) mod pygame {
         /// pygame.mixer.init(channels=8)：显式初始化（不调也行——首次播放自动建）
         #[pyfunction]
         fn init(channels: Option<u32>, vm: &VirtualMachine) -> PyResult<()> {
-            bridge::mixer_init(channels.unwrap_or(8), vm)
+            starfish::pygame::mixer::init(channels.unwrap_or(8))
+                .map_err(|e| vm.new_value_error(format!("音频设备初始化失败: {e:?}")))
         }
 
         /// 卸载（Drop 即停设备）
         #[pyfunction]
         fn quit() {
-            bridge::mixer_quit();
+            starfish::pygame::mixer::quit();
         }
 
         /// bool 形态（真 pygame 返回参数三元组/None——简化）
         #[pyfunction]
         fn get_init() -> bool {
-            bridge::mixer_get_init()
-        }
-
-        /// 平台音频手势约束查询：Web = True（浏览器自动播放策略——
-        /// AudioContext 的创建/恢复须待首次用户手势，keydown/mousedown
-        /// 均算 User Activation），原生平台 = False（可直接创建播放）。
-        /// 编译期 cfg 判定——供脚本自行分支，Web 的"延后触发"模式
-        /// 不再强加给三平台
-        #[pyfunction]
-        fn needs_gesture() -> bool {
-            cfg!(target_arch = "wasm32")
+            starfish::pygame::mixer::get_init()
         }
 
         /// 主音量（0..1）
@@ -1156,10 +1205,6 @@ pub(crate) mod pygame {
 
             #[pyfunction]
             fn play(args: MusicPlayArgs, vm: &VirtualMachine) -> PyResult<()> {
-                // Web 手势前跳过（不排队，同 Sound.play 定约）
-                if bridge::audio_gesture_locked() {
-                    return Ok(());
-                }
                 bridge::with_mixer(vm, |m| m.music_play(args.loops.unwrap_or(0)))?;
                 Ok(())
             }
@@ -2248,7 +2293,7 @@ pub(crate) mod pygame {
     }
 
     // ── key：按下视图查询（K_* 常量在 pygame 顶层，见 KEY_TABLE）─────
-    // 按下状态由 starfish 事件泵喂（bridge::pump → event::get 自动驱动）。
+    // 按下状态由引擎事件泵喂（event::pump 翻译时驱动状态表）。
     #[pymodule]
     pub(crate) mod key {
         use rustpython_vm::{Py, PyPayload, PyRef, PyResult, VirtualMachine, builtins::PyModule, pyclass};
@@ -3082,7 +3127,7 @@ pub(crate) mod pygame {
         /// pixel(f, x, y, color)
         #[pyfunction]
         fn pixel(f: PyObjectRef, x: i32, y: i32, color: SfColor, vm: &VirtualMachine) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             match route(&f, vm)? {
                 Target::Surf(s) => {
                     starfish::pygame::draw::rect(&*s.surface, c,
@@ -3133,7 +3178,7 @@ pub(crate) mod pygame {
             color: SfColor,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             match route(&f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::line(&*s.surface, c, (x1, y1), (x2, y2), 1),
                 Target::Active => bridge::with_session(vm, |t| {
@@ -3168,7 +3213,7 @@ pub(crate) mod pygame {
             color: SfColor,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             let r = radius.max(0) as u32;
             match route(&f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::circle(&*s.surface, c, (x, y), r, 1),
@@ -3202,7 +3247,7 @@ pub(crate) mod pygame {
             color: SfColor,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             let r = radius.max(0) as u32;
             match route(&f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::circle(&*s.surface, c, (x, y), r, 0),
@@ -3224,7 +3269,7 @@ pub(crate) mod pygame {
             color: SfColor,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             let rect = starfish::pygame::Rect::new(x - rx, y - ry, rx.max(0) * 2, ry.max(0) * 2);
             match route(&f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::ellipse(&*s.surface, c, rect, 1),
@@ -3260,7 +3305,7 @@ pub(crate) mod pygame {
             color: SfColor,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             let rect = starfish::pygame::Rect::new(x - rx, y - ry, rx.max(0) * 2, ry.max(0) * 2);
             match route(&f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::ellipse(&*s.surface, c, rect, 0),
@@ -3284,7 +3329,7 @@ pub(crate) mod pygame {
             color: SfColor,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             let rect = starfish::pygame::Rect::new(x - radius, y - radius, radius.max(0) * 2, radius.max(0) * 2);
             let (s, e) = (
                 (start_angle as f32).to_radians(),
@@ -3349,7 +3394,7 @@ pub(crate) mod pygame {
             color: SfColor,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             let pts = SfPoints(vec![(x1, y1), (x2, y2), (x3, y3)]);
             match route(f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::polygon(&*s.surface, c, &pts.0, 0),
@@ -3372,7 +3417,7 @@ pub(crate) mod pygame {
             color: SfColor,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             let pts = SfPoints(vec![(x1, y1), (x2, y2), (x3, y3)]);
             match route(f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::polygon(&*s.surface, c, &pts.0, 1),
@@ -3386,7 +3431,7 @@ pub(crate) mod pygame {
         /// polygon(f, points, color)：1px 描边多边形（points = [(x, y), ...]）。
         #[pyfunction]
         fn polygon(f: PyObjectRef, points: SfPoints, color: SfColor, vm: &VirtualMachine) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             match route(&f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::polygon(&*s.surface, c, &points.0, 1),
                 Target::Active => bridge::with_session(vm, |t| {
@@ -3410,7 +3455,7 @@ pub(crate) mod pygame {
             color: SfColor,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             match route(&f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::polygon(&*s.surface, c, &points.0, 0),
                 Target::Active => bridge::with_session(vm, |t| {
@@ -3423,7 +3468,7 @@ pub(crate) mod pygame {
         /// rectangle(f, rect, color)：1px 描边矩形（rect = (left, top, w, h)）。
         #[pyfunction]
         fn rectangle(f: PyObjectRef, rect: SfRect, color: SfColor, vm: &VirtualMachine) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             let r = starfish::pygame::Rect::new(rect.x, rect.y, rect.w, rect.h);
             match route(&f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::rect(&*s.surface, c, r, 1),
@@ -3435,7 +3480,7 @@ pub(crate) mod pygame {
         /// box(f, rect, color)：填充矩形。
         #[pyfunction(name = "box")]
         fn box_(f: PyObjectRef, rect: SfRect, color: SfColor, vm: &VirtualMachine) -> PyResult<()> {
-            let c = bridge::color_of(color);
+            let c = color.0;
             let r = starfish::pygame::Rect::new(rect.x, rect.y, rect.w, rect.h);
             match route(&f, vm)? {
                 Target::Surf(s) => starfish::pygame::draw::rect(&*s.surface, c, r, 0),
@@ -3828,14 +3873,14 @@ pub(crate) mod pygame {
     impl PyTargetsSession {
         #[pymethod]
         fn __enter__(zelf: PyRef<Self>) -> PyRef<Self> {
-            bridge::mrt_begin(&zelf.surfaces);
+            starfish::pygame::render::session::begin_targets(&zelf.surfaces);
             zelf
         }
 
         /// 异常不吞（返回 False 交回宿主壳打印收口）。
         #[pymethod]
         fn __exit__(&self, _exc_info: FuncArgs) -> bool {
-            bridge::mrt_end();
+            starfish::pygame::render::session::end_targets();
             false
         }
 
@@ -3853,7 +3898,7 @@ pub(crate) mod pygame {
             bridge::with_mrt_session(vm, |p| {
                 starfish::pygame::draw::rect(
                     p,
-                    bridge::color_of(args.color),
+                    args.color.0,
                     starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                     args.width.unwrap_or(0).max(0) as u32,
                 );
@@ -3865,7 +3910,7 @@ pub(crate) mod pygame {
             bridge::with_mrt_session(vm, |p| {
                 starfish::pygame::draw::circle(
                     p,
-                    bridge::color_of(args.color),
+                    args.color.0,
                     (args.center.0, args.center.1),
                     args.radius.max(0) as u32,
                     args.width.unwrap_or(0).max(0) as u32,
@@ -3878,7 +3923,7 @@ pub(crate) mod pygame {
             bridge::with_mrt_session(vm, |p| {
                 starfish::pygame::draw::line(
                     p,
-                    bridge::color_of(args.color),
+                    args.color.0,
                     (args.start.0, args.start.1),
                     (args.end.0, args.end.1),
                     args.width.unwrap_or(1).max(0) as u32,
@@ -3891,7 +3936,7 @@ pub(crate) mod pygame {
             bridge::with_mrt_session(vm, |p| {
                 starfish::pygame::draw::polygon(
                     p,
-                    bridge::color_of(args.color),
+                    args.color.0,
                     &args.points.0,
                     args.width.unwrap_or(0).max(0) as u32,
                 );
@@ -3903,7 +3948,7 @@ pub(crate) mod pygame {
             bridge::with_mrt_session(vm, |p| {
                 starfish::pygame::draw::ellipse(
                     p,
-                    bridge::color_of(args.color),
+                    args.color.0,
                     starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                     args.width.unwrap_or(0).max(0) as u32,
                 );
@@ -3915,7 +3960,7 @@ pub(crate) mod pygame {
             bridge::with_mrt_session(vm, |p| {
                 starfish::pygame::draw::arc(
                     p,
-                    bridge::color_of(args.color),
+                    args.color.0,
                     starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                     args.start_angle.into_float() as f32,
                     args.stop_angle.into_float() as f32,

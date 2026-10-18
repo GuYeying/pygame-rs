@@ -68,14 +68,14 @@ async fn preload_cjk(tag: &str) {
     #[cfg(windows)]
     match std::fs::read("C:/Windows/Fonts/msyh.ttc") {
         Ok(b) => {
-            crate::rpy::bridge::font_cache_set("cjk", b);
+            starfish::pygame::font::preload("cjk", b);
             dlog(tag, "CJK 字体已预载（系统 msyh.ttc）");
         }
         Err(_) => dlog(tag, "CJK 预载失败（msyh.ttc 不存在）"),
     }
     match starfish::base::io::read("fonts/cjk.ttf").await {
         Ok(b) => {
-            crate::rpy::bridge::font_cache_set("cjk", b);
+            starfish::pygame::font::preload("cjk", b);
             dlog(tag, "CJK 字体已预载（fonts/cjk.ttf）");
         }
         Err(_) => dlog(tag, "CJK 字体未找到（fonts/cjk.ttf）"),
@@ -95,7 +95,7 @@ async fn preload_cjk(tag: &str) {
         for p in CJK_CANDIDATES {
             match starfish::base::io::read(p).await {
                 Ok(b) => {
-                    crate::rpy::bridge::font_cache_set("cjk", b);
+                    starfish::pygame::font::preload("cjk", b);
                     dlog(tag, &format!("CJK 字体已预载（系统 {p}）"));
                     hit = true;
                     break;
@@ -142,7 +142,6 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
     interp.enter(|vm| {
         let run = || -> Result<(), String> {
             let scope = vm.new_scope_with_builtins();
-            rpy::bridge::register(vm, &scope);
             rpy::install_pygame(vm);
             dlog(tag, "pygame 原生模块已注入");
             let code = vm
@@ -192,7 +191,7 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
     // 主循环（调用方持）：事件泵 → Python 帧步进 → 上屏 → 帧拍
     dlog(tag, "entering frame loop");
     loop {
-        if rpy::bridge::pump() {
+        if starfish::pygame::event::pump() {
             dlog(tag, "退出请求，结束");
             break;
         }
@@ -221,12 +220,12 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
             break;
         }
 
-        rpy::bridge::audio_pump(); // Web 流式解码驱动（桌面 no-op）
+        starfish::pygame::mixer::pump(); // Web 流式解码驱动（桌面 no-op）
         next_frame().await;
     }
     // 先关窗再卸载（RP 卸载期间窗口 ghost）；mixer 显式收口（TLS 析构期）
     display::quit();
-    rpy::bridge::mixer_quit();
+    starfish::pygame::mixer::quit();
     dlog(tag, "main loop ended");
     Ok(())
 }

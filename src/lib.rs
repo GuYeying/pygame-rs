@@ -13,9 +13,10 @@
 //!（pygame.Surface 直通句柄 + transform + image + Font.render 一等化）与
 //! **批次 G**（CJK 字体：bridge 字节缓存 + 宿主 io 预加载 + Font("cjk")
 //! 构造解析链）、**批次 H**（sndarray：Sound ↔ 嵌套 list 互转）已完成。
-//! **Web 音频手势定约**（2026-09-30）：`pygame.mixer.needs_gesture()`
-//! 平台查询 + 手势前 play 跳过（不排队不占通道）+ starfish 侧
-//! AudioContext 经 cpal 0.18 包装层解包捕获。
+//! **Web 音频手势定约**（2026-09-30 立约，**2026-10-18 批次 41 修订为
+//! 部署约定**——运行时手势门已撤，见批次 41 段）：原 `needs_gesture()`
+//! 平台查询 + 手势前 play 跳过 + starfish 侧 AudioContext 经 cpal 0.18
+//! 包装层解包捕获。
 //! **批次 I**（pygame.touch 多点触控查询）、**批次 J**（pygame.gamepad
 //! 手柄查询：整数标准布局常量 + starfish gamepad facade 宿主泵排水 +
 //! gilrs TLS 泄漏修）、**批次 K**（math 3D：Vector3/Quaternion/Mat4 +
@@ -45,9 +46,25 @@
 //! `rpy::testhost::run(script, tag, transparent)`（装配/字体预载/事件泵/帧循环/收口
 //! 固化）+ 每模块一个 `examples/<模块>_test` 案例（[模块-test] 行逐项
 //! 断言 + 样张上屏）；首例 `font_test`（font 模块 15 项断言含旋转/缩放/
-//! 半透明）已三端跑通。
-//! 后续批次：mask/surfarray/PixelArray/BufferProxy（受像素回读桥约束）、
-//! sprite（纯 Python）、
+//! 半透明）已三端跑通。**批次 41**（bridge 瘦身七步——状态归属移交
+//! starfish，架构原则见 bridge.rs 文件头）已完成：活跃会话（starfish
+//! `render::session` 双槽 + MRT 保活表收回引擎）/混音器（`pygame::mixer`
+//! 生命周期 + 内嵌提示音）/事件队列（`pygame::event`
+//! SDL 模型队列化，宿主壳直调 event::pump；**ESC 退出语义归脚本**）/
+//! 字体预载（`font::preload`）四大状态块升格引擎公共 API +
+//! `DrawTarget::blit_area/push_points/push_points_indexed` 直通（引擎
+//! 版 blit_area 补齐源面 flush 保险）；`sf_draw_*` 七件全局/register/
+//! bridge thread-local 状态全退役，bridge 691→253 行（纯 RP 薄壳：
+//! 错误映射/收参/downcast）。顺带修复 PySurface.fill/blit 注释遗留
+//! （selftest 复活 2 项）。sig_probe 的 draw 族收参断言迁入
+//! binding_probe 真会话（draw.positive/draw.negative）。
+//! **Web 自动播放策略 = 部署约定**（2026-10-18 定约修订）：运行时
+//! 手势门整体撤除（`pygame.mixer.needs_gesture()` API、play 类调用前
+//! 的跳过检查、事件泵手势标记）——由宿主页面保证首次手势先行
+//! （build_web.py 模板内建"▶ 点击启动"覆盖层，wasm 启动挂进 click
+//! 回调，产物天然合规）；脚本侧平台分支删除，三平台同代码。
+//! 后续批次：surfarray/PixelArray/BufferProxy（已定案砍掉——GPU 回读
+//! 桥约束）、sprite 深化、
 //! dialog 轮询式 job API（Android）、面 B（starfish 直通模块）、
 //! .pyi 桩体系、行为回归集（旧仓库 M2 的 71 例迁移）、get_at/tostring
 //! 像素回读（需 starfish 出 pub 包装）。

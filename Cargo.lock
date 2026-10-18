@@ -3586,7 +3586,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "pygame-rs"
-version = "0.1.0"
+version = "0.2.5"
 dependencies = [
  "glam",
  "pollster",
@@ -4687,7 +4687,7 @@ dependencies = [
 
 [[package]]
 name = "starfish"
-version = "0.9.20"
+version = "0.9.25"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",

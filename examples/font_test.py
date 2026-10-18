@@ -44,21 +44,18 @@ def game():
         st('Font("cjk") 构造', False)
         print("    [font-test] CJK 异常:", e)
 
-    # ── 路径字体（开发者自填路径语义；Web 无文件系统 → SKIP 不计 FAIL；
-    # 安卓设备无候选路径字体 → SKIP 非回归）──
+    # ── 路径字体（开发者自填路径语义；候选链按平台命中——Windows 命中
+    # arial / Android 命中 Noto / Web·无此文件的设备全 miss → SKIP 非回归）──
     _path_font = None
-    if pygame.mixer.needs_gesture():
-        print("[font-test] SKIP Font(路径)（Web 无文件系统——路径由开发者自填）")
-    else:
-        for _p in ("C:/Windows/Fonts/arial.ttf", "/system/fonts/NotoSansCJK-Regular.ttc"):
-            try:
-                _path_font = pygame.font.Font(_p, 24)
-                st("Font(路径) " + _p, True)
-                break
-            except (ValueError, TypeError):
-                continue
-        if _path_font is None:
-            print("[font-test] SKIP Font(路径)（设备无候选路径字体——非回归）")
+    for _p in ("C:/Windows/Fonts/arial.ttf", "/system/fonts/NotoSansCJK-Regular.ttc"):
+        try:
+            _path_font = pygame.font.Font(_p, 24)
+            st("Font(路径) " + _p, True)
+            break
+        except (ValueError, TypeError):
+            continue
+    if _path_font is None:
+        print("[font-test] SKIP Font(路径)（平台无候选路径字体——非回归）")
 
     # ── render → Surface 一等化 ──
     ts = f24.render("render -> Surface (Antonio 24)", True, (255, 255, 255))
