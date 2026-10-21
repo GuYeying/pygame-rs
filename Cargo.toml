@@ -1,13 +1,30 @@
 [package]
 name = "pygame-rs"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2024"
 description = "starfish 的 Python 绑定层：RustPython 内嵌壳 + pygame 绑定面（独立 crate，starfish 本体零 Python 资产）"
 
 [dependencies]
-# 引擎本体（单向依赖：pygame-rs → starfish；starfish 永不感知本 crate）
-# starfish 与本 crate 同级：D:\Projects\Rust\starfish
-starfish = { path = "../starfish" }
+starfish-std        = { path = "../starfish/crates/starfish-std" }
+starfish-we         = { path = "../starfish/crates/starfish-we" }
+starfish-time       = { path = "../starfish/crates/starfish-time" }
+starfish-permission = { path = "../starfish/crates/starfish-permission" }
+starfish-io         = { path = "../starfish/crates/starfish-io" }
+starfish-net        = { path = "../starfish/crates/starfish-net" }
+starfish-dialog     = { path = "../starfish/crates/starfish-dialog" }
+starfish-gamepad    = { path = "../starfish/crates/starfish-gamepad" }
+starfish-render     = { path = "../starfish/crates/starfish-render" }
+starfish-gfx        = { path = "../starfish/crates/starfish-gfx" }
+starfish-font       = { path = "../starfish/crates/starfish-font" }
+starfish-audio      = { path = "../starfish/crates/starfish-audio" }
+starfish-video      = { path = "../starfish/crates/starfish-video" }
+starfish-pygame     = { path = "../starfish/crates/starfish-pygame" }
+starfish-gui        = { path = "../starfish/crates/starfish-gui" }
+starfish-physics    = { path = "../starfish/crates/starfish-physics" }
+starfish-tilemap    = { path = "../starfish/crates/starfish-tilemap" }
+starfish-voxel      = { path = "../starfish/crates/starfish-voxel" }
+
+
 # math 绑定层的 glam 直绑（批次 K Vector3/Quaternion/Mat4；版本与 starfish
 # 相同 semver → cargo 合并为同一实例，零重复）
 glam = "0.33"

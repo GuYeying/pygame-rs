@@ -99,8 +99,8 @@ pub(crate) mod pygame {
         PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
         builtins::{PyModule, PyStr, PyStrRef},
     };
-    use starfish::pygame::Rect as EngineRect;
-    use starfish::pygame::render::{DrawTarget, Surface as SfSurface};
+    use starfish_pygame::Rect as EngineRect;
+    use starfish_pygame::render::{DrawTarget, Surface as SfSurface};
     use crate::rpy::{bridge, args};
     use crate::rpy::args::SfColor;
 
@@ -114,7 +114,7 @@ pub(crate) mod pygame {
     // 注：CJK 中文走宿主 io 预载（msyh/cjk.ttf/系统候选链），与此常量无关。
     pub(crate) const DEFAULT_FONT: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../starfish/resources/fonts/Antonio-Regular.ttf"
+        "/resources/fonts/Antonio-Regular.ttf"
     ));
 
     // ── Surface：starfish Surface 直通句柄（批次 F）─────────────────
@@ -174,17 +174,17 @@ pub(crate) mod pygame {
 
         #[pymethod]
         fn fill(&self, color: crate::rpy::args::SfColor, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-            use starfish::pygame::render::DrawTarget;
+            use starfish_pygame::render::DrawTarget;
             let r = DrawTarget::fill(&*self.surface, [color.0[0], color.0[1], color.0[2], color.0[3]]);
             Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx).into())
         }
 
         #[pymethod]
         fn rect(&self, args: args::DrawRectArgs, vm: &VirtualMachine) -> PyResult<()> {
-            starfish::pygame::draw::rect(
+            starfish_pygame::draw::rect(
                 &*self.surface,
                 args.color.0,
-                starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                starfish_pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                 args.width.unwrap_or(0).max(0) as u32,
             );
             Ok(())
@@ -192,7 +192,7 @@ pub(crate) mod pygame {
 
         #[pymethod]
         fn circle(&self, args: args::DrawCircleArgs, vm: &VirtualMachine) -> PyResult<()> {
-            starfish::pygame::draw::circle(
+            starfish_pygame::draw::circle(
                 &*self.surface,
                 args.color.0,
                 (args.center.0, args.center.1),
@@ -204,7 +204,7 @@ pub(crate) mod pygame {
 
         #[pymethod]
         fn line(&self, args: args::DrawLineArgs, vm: &VirtualMachine) -> PyResult<()> {
-            starfish::pygame::draw::line(
+            starfish_pygame::draw::line(
                 &*self.surface,
                 args.color.0,
                 (args.start.0, args.start.1),
@@ -216,7 +216,7 @@ pub(crate) mod pygame {
 
         #[pymethod]
         fn polygon(&self, args: args::DrawPolygonArgs, vm: &VirtualMachine) -> PyResult<()> {
-            starfish::pygame::draw::polygon(
+            starfish_pygame::draw::polygon(
                 &*self.surface,
                 args.color.0,
                 &args.points.0,
@@ -227,10 +227,10 @@ pub(crate) mod pygame {
 
         #[pymethod]
         fn ellipse(&self, args: args::DrawEllipseArgs, vm: &VirtualMachine) -> PyResult<()> {
-            starfish::pygame::draw::ellipse(
+            starfish_pygame::draw::ellipse(
                 &*self.surface,
                 args.color.0,
-                starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                starfish_pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                 args.width.unwrap_or(0).max(0) as u32,
             );
             Ok(())
@@ -238,10 +238,10 @@ pub(crate) mod pygame {
 
         #[pymethod]
         fn arc(&self, args: args::DrawArcArgs, vm: &VirtualMachine) -> PyResult<()> {
-            starfish::pygame::draw::arc(
+            starfish_pygame::draw::arc(
                 &*self.surface,
                 args.color.0,
-                starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                starfish_pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                 args.start_angle.into_float() as f32,
                 args.stop_angle.into_float() as f32,
                 args.width.unwrap_or(1).max(1) as u32,
@@ -256,7 +256,7 @@ pub(crate) mod pygame {
             dest: args::SfPoint,
             vm: &VirtualMachine,
         ) -> PyResult<PyObjectRef> {
-            use starfish::pygame::render::DrawTarget;
+            use starfish_pygame::render::DrawTarget;
             let r = DrawTarget::blit(&*self.surface, &src.surface, (dest.0, dest.1));
             Ok(PyRect(Cell::new(r)).into_ref(&vm.ctx).into())
         }
@@ -303,7 +303,7 @@ pub(crate) mod pygame {
             vm: &VirtualMachine,
         ) -> PyResult<PyObjectRef> {
             use rustpython_vm::convert::TryFromObject;
-            use starfish::pygame::render::DrawTarget;
+            use starfish_pygame::render::DrawTarget;
             let t = text
                 .to_str()
                 .ok_or_else(|| vm.new_value_error("文本含非 UTF-8 字符"))?;
@@ -339,7 +339,7 @@ pub(crate) mod pygame {
         /// ADR-5 with 会话入口：进入 = 开启 RenderPass，退出 = finish 打包。
         #[pymethod]
         fn render(&self, vm: &VirtualMachine) -> PyResult<PyRef<PyScreenSession>> {
-            starfish::pygame::render::session::begin_screen();
+            starfish_pygame::render::session::begin_screen();
             Ok(PyScreenSession.into_ref(&vm.ctx))
         }
 
@@ -347,7 +347,7 @@ pub(crate) mod pygame {
         /// canvas 下跟随页面布局变化——脚本查询用）
         #[pymethod]
         fn get_size(&self) -> (u32, u32) {
-            starfish::pygame::display::get_screen().size()
+            starfish_pygame::display::get_screen().size()
         }
 
         /// 深度会话（v1.1：Surface 创建整合 depth_buffer 后启用，架构 §九）。
@@ -383,14 +383,14 @@ pub(crate) mod pygame {
         /// 异常不吞（返回 False 交回宿主壳打印收口）。
         #[pymethod]
         fn __exit__(&self, _exc_info: FuncArgs) -> bool {
-            starfish::pygame::render::session::end_screen();
+            starfish_pygame::render::session::end_screen();
             false
         }
 
         #[pymethod]
         fn fill(&self, args: FillArgs, _vm: &VirtualMachine) -> PyResult<()> {
             // Screen 例外：全局屏填充不经会话（get_screen 进程唯一）
-            starfish::pygame::display::get_screen().fill(args.color.0);
+            starfish_pygame::display::get_screen().fill(args.color.0);
             Ok(())
         }
 
@@ -398,10 +398,10 @@ pub(crate) mod pygame {
         fn rect(&self, args: args::DrawRectArgs, vm: &VirtualMachine) -> PyResult<()> {
             let width = args.width.unwrap_or(0).max(0) as u32;
             bridge::with_session(vm, |t| {
-                starfish::pygame::draw::rect(
+                starfish_pygame::draw::rect(
                     t,
                     args.color.0,
-                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    starfish_pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                     width,
                 );
             })
@@ -412,7 +412,7 @@ pub(crate) mod pygame {
             let radius = args.radius.max(0) as u32;
             let width = args.width.unwrap_or(0).max(0) as u32;
             bridge::with_session(vm, |t| {
-                starfish::pygame::draw::circle(
+                starfish_pygame::draw::circle(
                     t,
                     args.color.0,
                     (args.center.0, args.center.1),
@@ -426,7 +426,7 @@ pub(crate) mod pygame {
         fn line(&self, args: args::DrawLineArgs, vm: &VirtualMachine) -> PyResult<()> {
             let width = args.width.unwrap_or(1).max(1) as u32;
             bridge::with_session(vm, |t| {
-                starfish::pygame::draw::line(
+                starfish_pygame::draw::line(
                     t,
                     args.color.0,
                     (args.start.0, args.start.1),
@@ -440,7 +440,7 @@ pub(crate) mod pygame {
         fn polygon(&self, args: args::DrawPolygonArgs, vm: &VirtualMachine) -> PyResult<()> {
             let width = args.width.unwrap_or(0).max(0) as u32;
             bridge::with_session(vm, |t| {
-                starfish::pygame::draw::polygon(t, args.color.0, &args.points.0, width);
+                starfish_pygame::draw::polygon(t, args.color.0, &args.points.0, width);
             })
         }
 
@@ -448,10 +448,10 @@ pub(crate) mod pygame {
         fn ellipse(&self, args: args::DrawEllipseArgs, vm: &VirtualMachine) -> PyResult<()> {
             let width = args.width.unwrap_or(0).max(0) as u32;
             bridge::with_session(vm, |t| {
-                starfish::pygame::draw::ellipse(
+                starfish_pygame::draw::ellipse(
                     t,
                     args.color.0,
-                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    starfish_pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                     width,
                 );
             })
@@ -461,10 +461,10 @@ pub(crate) mod pygame {
         fn arc(&self, args: args::DrawArcArgs, vm: &VirtualMachine) -> PyResult<()> {
             let width = args.width.unwrap_or(1).max(1) as u32;
             bridge::with_session(vm, |t| {
-                starfish::pygame::draw::arc(
+                starfish_pygame::draw::arc(
                     t,
                     args.color.0,
-                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    starfish_pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                     args.start_angle.into_float() as f32,
                     args.stop_angle.into_float() as f32,
                     width,
@@ -556,7 +556,7 @@ pub(crate) mod pygame {
     #[derive(Debug, PyPayload)]
     #[pyattr]
     #[pyclass(module = "pygame", name = "Color", unhashable = true)]
-    pub(crate) struct PyColor(pub(crate) Cell<starfish::pygame::color::Color>);
+    pub(crate) struct PyColor(pub(crate) Cell<starfish_pygame::color::Color>);
 
 
 
@@ -578,25 +578,25 @@ pub(crate) mod pygame {
 
         // ── 窗口旗标（locals::display 透传；set_mode 当前收下不解析，前向兼容）──
         #[pyattr]
-        pub(crate) const RESIZABLE: u32 = starfish::pygame::display::RESIZABLE;
+        pub(crate) const RESIZABLE: u32 = starfish_pygame::display::RESIZABLE;
         #[pyattr]
-        pub(crate) const FULLSCREEN: u32 = starfish::pygame::display::FULLSCREEN;
+        pub(crate) const FULLSCREEN: u32 = starfish_pygame::display::FULLSCREEN;
         #[pyattr]
-        pub(crate) const NOFRAME: u32 = starfish::pygame::display::NOFRAME;
+        pub(crate) const NOFRAME: u32 = starfish_pygame::display::NOFRAME;
         #[pyattr]
-        pub(crate) const HIDDEN: u32 = starfish::pygame::display::HIDDEN;
+        pub(crate) const HIDDEN: u32 = starfish_pygame::display::HIDDEN;
         #[pyattr]
-        pub(crate) const ALWAYS_ON_TOP: u32 = starfish::pygame::display::ALWAYS_ON_TOP;
+        pub(crate) const ALWAYS_ON_TOP: u32 = starfish_pygame::display::ALWAYS_ON_TOP;
         #[pyattr]
-        pub(crate) const TRANSPARENT: u32 = starfish::pygame::display::TRANSPARENT;
+        pub(crate) const TRANSPARENT: u32 = starfish_pygame::display::TRANSPARENT;
         #[pyattr]
-        pub(crate) const VULKAN: u32 = starfish::pygame::display::VULKAN;
+        pub(crate) const VULKAN: u32 = starfish_pygame::display::VULKAN;
         #[pyattr]
-        pub(crate) const DIRECTX: u32 = starfish::pygame::display::DIRECTX;
+        pub(crate) const DIRECTX: u32 = starfish_pygame::display::DIRECTX;
         #[pyattr]
-        pub(crate) const METAL: u32 = starfish::pygame::display::METAL;
+        pub(crate) const METAL: u32 = starfish_pygame::display::METAL;
         #[pyattr]
-        pub(crate) const OPENGLES: u32 = starfish::pygame::display::OPENGLES;
+        pub(crate) const OPENGLES: u32 = starfish_pygame::display::OPENGLES;
 
         /// set_mode(size, flags=0) → Screen 占位（真身由宿主壳先行装配，
         /// 此处记录需求；flags 批次 O 落地——位集/序列翻译到运行时窗口
@@ -634,7 +634,7 @@ pub(crate) mod pygame {
                 Some(f) => flags_bits(f, vm)?,
                 None => 0,
             };
-            starfish::pygame::display::apply_window_request(
+            starfish_pygame::display::apply_window_request(
                 (args.size.0.max(0) as u32, args.size.1.max(0) as u32),
                 bits,
             );
@@ -643,7 +643,7 @@ pub(crate) mod pygame {
 
         #[pyfunction]
         fn flip(_vm: &VirtualMachine) {
-            starfish::pygame::display::flip();
+            starfish_pygame::display::flip();
         }
 
         /// set_opacity(v)：窗口整体不透明度（0.0 透明 .. 1.0 不透明）。
@@ -651,7 +651,7 @@ pub(crate) mod pygame {
         /// 区域透出桌面，前者调窗口整体 alpha）。
         #[pyfunction]
         fn set_opacity(opacity: f32, _vm: &VirtualMachine) {
-            starfish::pygame::display::set_opacity(opacity)
+            starfish_pygame::display::set_opacity(opacity)
         }
 
         /// set_caption(title)：窗口标题。
@@ -660,22 +660,22 @@ pub(crate) mod pygame {
             let t = title
                 .to_str()
                 .ok_or_else(|| vm.new_value_error("标题含非 UTF-8 字符"))?;
-            starfish::pygame::display::set_caption(t);
+            starfish_pygame::display::set_caption(t);
             Ok(())
         }
 
         /// get_init() -> bool：set_mode 是否已调用（display 初始化态）。
         #[pyfunction]
         fn get_init(_vm: &VirtualMachine) -> bool {
-            starfish::pygame::display::get_init()
+            starfish_pygame::display::get_init()
         }
     }
 
     #[pymodule]
     pub(crate) mod event {
         use rustpython_vm::builtins::PyModule;
-        use starfish::{base::window::KeyCode};
-        use starfish::pygame::Event as EngineEvent;
+        use starfish_we::KeyCode;
+        use starfish_pygame::Event as EngineEvent;
         use rustpython_derive::{pyclass, pymodule};
         use rustpython_vm::types::{Comparable, PyComparisonOp, Representable};
         use rustpython_vm::{
@@ -722,7 +722,7 @@ pub(crate) mod pygame {
         impl PyPressed {
             #[pymethod]
             fn get(&self, key: PyRef<PyKey>) -> bool {
-                starfish::pygame::key::get_pressed().get(key.0)
+                starfish_pygame::key::get_pressed().get(key.0)
             }
         }
 
@@ -855,7 +855,7 @@ pub(crate) mod pygame {
         /// 映射同源）。
         #[pyfunction]
         fn get(vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-            let items: Vec<PyObjectRef> = starfish::pygame::event::get()
+            let items: Vec<PyObjectRef> = starfish_pygame::event::get()
                 .into_iter()
                 .map(|ev| PyEvent::from_engine(vm, ev).into_pyobject(vm))
                 .collect();
@@ -866,14 +866,14 @@ pub(crate) mod pygame {
         /// 与 get() 的"全量排空"互补）。
         #[pyfunction]
         fn poll(vm: &VirtualMachine) -> PyResult<Option<PyObjectRef>> {
-            Ok(starfish::pygame::event::poll()
+            Ok(starfish_pygame::event::poll()
                 .map(|ev| PyEvent::from_engine(vm, ev).into_pyobject(vm)))
         }
 
         /// clear()：清空事件队列。
         #[pyfunction]
         fn clear(_vm: &VirtualMachine) {
-            starfish::pygame::event::clear();
+            starfish_pygame::event::clear();
         }
     }
 
@@ -887,13 +887,13 @@ pub(crate) mod pygame {
 
         #[pyfunction]
         fn get_ticks(_vm: &VirtualMachine) -> u64 {
-            starfish::base::time::since_start_ms()
+            starfish_time::since_start_ms()
         }
 
         /// pygame time.delay（Web 上 no-op——无阻塞模型，见 pygame/time.rs）。
         #[pyfunction]
         fn delay(ms: u64, _vm: &VirtualMachine) {
-            starfish::pygame::time::delay(ms);
+            starfish_pygame::time::delay(ms);
         }
 
         // ── Clock：帧时钟（上限节流语义——详见 pygame/time.rs）────────
@@ -901,7 +901,7 @@ pub(crate) mod pygame {
         #[pyattr]
         #[pyclass(module = "pygame.time", name = "Clock", unhashable = true)]
         pub(crate) struct PyClock {
-            pub(crate) inner: std::cell::RefCell<starfish::pygame::time::Clock>,
+            pub(crate) inner: std::cell::RefCell<starfish_pygame::time::Clock>,
         }
 
         impl std::fmt::Debug for PyClock {
@@ -943,7 +943,7 @@ pub(crate) mod pygame {
                 _vm: &VirtualMachine,
             ) -> PyResult<Self> {
                 Ok(Self {
-                    inner: std::cell::RefCell::new(starfish::pygame::time::Clock::new()),
+                    inner: std::cell::RefCell::new(starfish_pygame::time::Clock::new()),
                 })
             }
         }
@@ -954,7 +954,7 @@ pub(crate) mod pygame {
     pub(crate) mod font {
         use rustpython_derive::pyclass;
         use rustpython_vm::types::Constructor;
-        use starfish::pygame::font as sf_font;
+        use starfish_pygame::font as sf_font;
 
         use crate::rpy::bridge;
         use rustpython_vm::builtins::{PyModule, PyStrRef, PyType};
@@ -1108,7 +1108,7 @@ pub(crate) mod pygame {
         use rustpython_vm::{Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
         use std::cell::Cell;
         use std::sync::Arc;
-        use starfish::base::audio::SoundData;
+        use starfish_audio::SoundData;
 
         use crate::rpy::bridge;
 
@@ -1147,20 +1147,20 @@ pub(crate) mod pygame {
         /// pygame.mixer.init(channels=8)：显式初始化（不调也行——首次播放自动建）
         #[pyfunction]
         fn init(channels: Option<u32>, vm: &VirtualMachine) -> PyResult<()> {
-            starfish::pygame::mixer::init(channels.unwrap_or(8))
+            starfish_pygame::mixer::init(channels.unwrap_or(8))
                 .map_err(|e| vm.new_value_error(format!("音频设备初始化失败: {e:?}")))
         }
 
         /// 卸载（Drop 即停设备）
         #[pyfunction]
         fn quit() {
-            starfish::pygame::mixer::quit();
+            starfish_pygame::mixer::quit();
         }
 
         /// bool 形态（真 pygame 返回参数三元组/None——简化）
         #[pyfunction]
         fn get_init() -> bool {
-            starfish::pygame::mixer::get_init()
+            starfish_pygame::mixer::get_init()
         }
 
         /// 主音量（0..1）
@@ -1262,17 +1262,17 @@ pub(crate) mod pygame {
 
         #[pyfunction]
         fn lerp(a: ArgIntoFloat, b: ArgIntoFloat, t: ArgIntoFloat) -> f32 {
-            starfish::pygame::math::lerp(a.into_float() as f32, b.into_float() as f32, t.into_float() as f32)
+            starfish_pygame::math::lerp(a.into_float() as f32, b.into_float() as f32, t.into_float() as f32)
         }
 
         #[pyfunction]
         fn clamp(x: ArgIntoFloat, min: ArgIntoFloat, max: ArgIntoFloat) -> f32 {
-            starfish::pygame::math::clamp(x.into_float() as f32, min.into_float() as f32, max.into_float() as f32)
+            starfish_pygame::math::clamp(x.into_float() as f32, min.into_float() as f32, max.into_float() as f32)
         }
 
         #[pyfunction]
         fn inv_lerp(a: ArgIntoFloat, b: ArgIntoFloat, v: ArgIntoFloat) -> f32 {
-            starfish::pygame::math::inv_lerp(a.into_float() as f32, b.into_float() as f32, v.into_float() as f32)
+            starfish_pygame::math::inv_lerp(a.into_float() as f32, b.into_float() as f32, v.into_float() as f32)
         }
 
         #[pyfunction]
@@ -1283,7 +1283,7 @@ pub(crate) mod pygame {
             out_b: ArgIntoFloat,
             v: ArgIntoFloat,
         ) -> f32 {
-            starfish::pygame::math::remap(
+            starfish_pygame::math::remap(
                 in_a.into_float() as f32,
                 in_b.into_float() as f32,
                 out_a.into_float() as f32,
@@ -1294,12 +1294,12 @@ pub(crate) mod pygame {
 
         #[pyfunction]
         fn smoothstep(e0: ArgIntoFloat, e1: ArgIntoFloat, x: ArgIntoFloat) -> f32 {
-            starfish::pygame::math::smoothstep(e0.into_float() as f32, e1.into_float() as f32, x.into_float() as f32)
+            starfish_pygame::math::smoothstep(e0.into_float() as f32, e1.into_float() as f32, x.into_float() as f32)
         }
 
         #[pyfunction]
         fn smootherstep(e0: ArgIntoFloat, e1: ArgIntoFloat, x: ArgIntoFloat) -> f32 {
-            starfish::pygame::math::smootherstep(e0.into_float() as f32, e1.into_float() as f32, x.into_float() as f32)
+            starfish_pygame::math::smootherstep(e0.into_float() as f32, e1.into_float() as f32, x.into_float() as f32)
         }
 
         // ── Vector2：基础向量（批次 H v1；rotate/angle_to 等留增强批）──
@@ -1313,11 +1313,11 @@ pub(crate) mod pygame {
 
         impl PyVector2 {
             /// glam 视图（算术协议用）
-            fn vec2(&self) -> starfish::pygame::math::Vector2 {
-                starfish::pygame::math::Vector2::new(self.x.get(), self.y.get())
+            fn vec2(&self) -> starfish_pygame::math::Vector2 {
+                starfish_pygame::math::Vector2::new(self.x.get(), self.y.get())
             }
 
-            fn from_vec2(vm: &VirtualMachine, v: starfish::pygame::math::Vector2) -> PyRef<Self> {
+            fn from_vec2(vm: &VirtualMachine, v: starfish_pygame::math::Vector2) -> PyRef<Self> {
                 Self {
                     x: Cell::new(v.x),
                     y: Cell::new(v.y),
@@ -1522,11 +1522,11 @@ pub(crate) mod pygame {
 
         impl PyVector3 {
             /// glam 视图（方法面从此构造）
-            fn vec(&self) -> starfish::pygame::math::Vector3 {
-                starfish::pygame::math::Vector3::new(self.x.get(), self.y.get(), self.z.get())
+            fn vec(&self) -> starfish_pygame::math::Vector3 {
+                starfish_pygame::math::Vector3::new(self.x.get(), self.y.get(), self.z.get())
             }
 
-            fn from_vec(vm: &VirtualMachine, v: starfish::pygame::math::Vector3) -> PyRef<Self> {
+            fn from_vec(vm: &VirtualMachine, v: starfish_pygame::math::Vector3) -> PyRef<Self> {
                 Self {
                     x: Cell::new(v.x),
                     y: Cell::new(v.y),
@@ -1692,7 +1692,7 @@ pub(crate) mod pygame {
                 if v.length_squared() > f32::EPSILON {
                     Self::from_vec(vm, v.normalize())
                 } else {
-                    Self::from_vec(vm, starfish::pygame::math::Vector3::ZERO)
+                    Self::from_vec(vm, starfish_pygame::math::Vector3::ZERO)
                 }
             }
 
@@ -1765,7 +1765,7 @@ pub(crate) mod pygame {
         #[derive(Clone, Debug, PyPayload)]
         #[pyattr]
         #[pyclass(module = "pygame.math", name = "Quaternion", unhashable = true)]
-        pub(crate) struct PyQuaternion(pub(crate) Cell<starfish::pygame::math::Quaternion>);
+        pub(crate) struct PyQuaternion(pub(crate) Cell<starfish_pygame::math::Quaternion>);
 
         impl PyQuaternion {
             /// 算术分发（批次 P）：quat × quat（组合）或 quat × 标量
@@ -1890,7 +1890,7 @@ pub(crate) mod pygame {
                 args: Self::Args,
                 _vm: &VirtualMachine,
             ) -> PyResult<Self> {
-                Ok(Self(Cell::new(starfish::pygame::math::Quaternion::from_xyzw(
+                Ok(Self(Cell::new(starfish_pygame::math::Quaternion::from_xyzw(
                     args.0.into_float() as f32,
                     args.1.into_float() as f32,
                     args.2.into_float() as f32,
@@ -1905,7 +1905,7 @@ pub(crate) mod pygame {
         #[derive(Clone, Debug, PyPayload)]
         #[pyattr]
         #[pyclass(module = "pygame.math", name = "Mat4", unhashable = true)]
-        pub(crate) struct PyMat4(pub(crate) Cell<starfish::pygame::math::Mat4>);
+        pub(crate) struct PyMat4(pub(crate) Cell<starfish_pygame::math::Mat4>);
 
         impl PyMat4 {
             /// 算术分发（批次 P）：mat × mat（组合）或 mat × 标量；全对称。
@@ -1971,7 +1971,7 @@ pub(crate) mod pygame {
         /// 单位四元数。
         #[pyfunction]
         fn quat_identity(vm: &VirtualMachine) -> PyRef<PyQuaternion> {
-            PyQuaternion(Cell::new(starfish::pygame::math::Quaternion::IDENTITY))
+            PyQuaternion(Cell::new(starfish_pygame::math::Quaternion::IDENTITY))
                 .into_ref(&vm.ctx)
         }
 
@@ -1984,13 +1984,13 @@ pub(crate) mod pygame {
             deg: ArgIntoFloat,
             vm: &VirtualMachine,
         ) -> PyRef<PyQuaternion> {
-            let axis = starfish::pygame::math::Vector3::new(
+            let axis = starfish_pygame::math::Vector3::new(
                 ax.into_float() as f32,
                 ay.into_float() as f32,
                 az.into_float() as f32,
             )
             .normalize_or_zero();
-            let q = starfish::pygame::math::Quaternion::from_axis_angle(
+            let q = starfish_pygame::math::Quaternion::from_axis_angle(
                 axis,
                 (deg.into_float() as f32).to_radians(),
             );
@@ -2006,7 +2006,7 @@ pub(crate) mod pygame {
             vm: &VirtualMachine,
         ) -> PyRef<PyQuaternion> {
             use glam::EulerRot;
-            let q = starfish::pygame::math::Quaternion::from_euler(
+            let q = starfish_pygame::math::Quaternion::from_euler(
                 EulerRot::XYZ,
                 (pitch.into_float() as f32).to_radians(),
                 (yaw.into_float() as f32).to_radians(),
@@ -2018,14 +2018,14 @@ pub(crate) mod pygame {
         /// 4x4 单位矩阵。
         #[pyfunction]
         fn mat4_identity(vm: &VirtualMachine) -> PyRef<PyMat4> {
-            PyMat4(Cell::new(starfish::pygame::math::Mat4::IDENTITY)).into_ref(&vm.ctx)
+            PyMat4(Cell::new(starfish_pygame::math::Mat4::IDENTITY)).into_ref(&vm.ctx)
         }
 
         /// 四元数 → 旋转矩阵。
         #[pyfunction]
         fn mat4_from_quat(q: PyRef<PyQuaternion>, vm: &VirtualMachine) -> PyRef<PyMat4> {
             PyMat4(Cell::new(
-                starfish::pygame::math::Mat4::from_quat(q.0.get()),
+                starfish_pygame::math::Mat4::from_quat(q.0.get()),
             ))
             .into_ref(&vm.ctx)
         }
@@ -2038,8 +2038,8 @@ pub(crate) mod pygame {
             z: ArgIntoFloat,
             vm: &VirtualMachine,
         ) -> PyRef<PyMat4> {
-            PyMat4(Cell::new(starfish::pygame::math::Mat4::from_translation(
-                starfish::pygame::math::Vector3::new(
+            PyMat4(Cell::new(starfish_pygame::math::Mat4::from_translation(
+                starfish_pygame::math::Vector3::new(
                     x.into_float() as f32,
                     y.into_float() as f32,
                     z.into_float() as f32,
@@ -2056,8 +2056,8 @@ pub(crate) mod pygame {
             z: ArgIntoFloat,
             vm: &VirtualMachine,
         ) -> PyRef<PyMat4> {
-            PyMat4(Cell::new(starfish::pygame::math::Mat4::from_scale(
-                starfish::pygame::math::Vector3::new(
+            PyMat4(Cell::new(starfish_pygame::math::Mat4::from_scale(
+                starfish_pygame::math::Vector3::new(
                     x.into_float() as f32,
                     y.into_float() as f32,
                     z.into_float() as f32,
@@ -2082,11 +2082,11 @@ pub(crate) mod pygame {
         fn array(sound: PyRef<PySound>, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
             let data = sound.data.clone();
             let rows: Vec<PyObjectRef> = match &data.channels {
-                starfish::base::audio::AudioChannels::Mono(samples) => samples
+                starfish_audio::AudioChannels::Mono(samples) => samples
                     .iter()
                     .map(|v| vm.new_tuple((*v,)).into())
                     .collect(),
-                starfish::base::audio::AudioChannels::Stereo(frames) => frames
+                starfish_audio::AudioChannels::Stereo(frames) => frames
                     .iter()
                     .map(|f| vm.new_tuple((f.left, f.right)).into())
                     .collect(),
@@ -2132,8 +2132,8 @@ pub(crate) mod pygame {
             }
             let rate = 44_100u32; // v1 固定（真 pygame 从 array 推断采样率的形态留 v2）
             let data = match channels {
-                1 => starfish::base::audio::SoundData::from_mono_f32(&flat, rate),
-                _ => starfish::base::audio::SoundData::from_interleaved_f32(&flat, rate),
+                1 => starfish_audio::SoundData::from_mono_f32(&flat, rate),
+                _ => starfish_audio::SoundData::from_interleaved_f32(&flat, rate),
             };
             Ok(PySound {
                 data: std::sync::Arc::new(data),
@@ -2149,12 +2149,12 @@ pub(crate) mod pygame {
 
         /// pygame.version.ver：starfish pygame 层版本（= crate 版本）
         #[pyattr(name = "ver")]
-        const VER: &str = starfish::pygame::version::VERSION;
+        const VER: &str = starfish_pygame::version::VERSION;
 
         /// pygame.version.vernum：版本三元组
         #[pyfunction]
         fn get_version() -> (u8, u8, u8) {
-            starfish::pygame::version::get_version()
+            starfish_pygame::version::get_version()
         }
     }
 
@@ -2164,7 +2164,7 @@ pub(crate) mod pygame {
         use rustpython_derive::pymodule;
         use rustpython_vm::function::ArgIntoFloat;
         use rustpython_vm::{PyPayload, PyRef, PyResult, VirtualMachine};
-        use starfish::pygame::transform as sf_transform;
+        use starfish_pygame::transform as sf_transform;
 
         use super::PySurface;
 
@@ -2241,7 +2241,7 @@ pub(crate) mod pygame {
     pub(crate) mod image {
         use rustpython_derive::pymodule;
         use rustpython_vm::{PyPayload, PyRef, PyResult, VirtualMachine};
-        use starfish::pygame::image as sf_image;
+        use starfish_pygame::image as sf_image;
 
         use super::PySurface;
 
@@ -2297,7 +2297,7 @@ pub(crate) mod pygame {
     #[pymodule]
     pub(crate) mod key {
         use rustpython_vm::{Py, PyPayload, PyRef, PyResult, VirtualMachine, builtins::PyModule, pyclass};
-        use starfish::base::window::KeyCode;
+        use starfish_we::KeyCode;
         use crate::rpy::native_pygame::pygame::event::PyKey;
 
         /// K_* 全表（starfish locals::key 的 108 键，typed KeyCode；
@@ -2377,13 +2377,13 @@ pub(crate) mod pygame {
 
         // ── 修饰键位常量（位值自定，承诺名字与语义）──
         #[pyattr]
-        pub(crate) const KMOD_SHIFT: u32 = starfish::pygame::key::KMOD_SHIFT;
+        pub(crate) const KMOD_SHIFT: u32 = starfish_pygame::key::KMOD_SHIFT;
         #[pyattr]
-        pub(crate) const KMOD_CTRL: u32 = starfish::pygame::key::KMOD_CTRL;
+        pub(crate) const KMOD_CTRL: u32 = starfish_pygame::key::KMOD_CTRL;
         #[pyattr]
-        pub(crate) const KMOD_ALT: u32 = starfish::pygame::key::KMOD_ALT;
+        pub(crate) const KMOD_ALT: u32 = starfish_pygame::key::KMOD_ALT;
         #[pyattr]
-        pub(crate) const KMOD_META: u32 = starfish::pygame::key::KMOD_META;
+        pub(crate) const KMOD_META: u32 = starfish_pygame::key::KMOD_META;
 
 
         #[derive(Debug, PyPayload)]
@@ -2394,7 +2394,7 @@ pub(crate) mod pygame {
         impl PyPressed {
             #[pymethod]
             fn get(&self, key: PyRef<PyKey>) -> bool {
-                starfish::pygame::key::get_pressed().get(key.0)
+                starfish_pygame::key::get_pressed().get(key.0)
             }
         }
 
@@ -2408,19 +2408,19 @@ pub(crate) mod pygame {
         /// 修饰键位集（KMOD_* 位；KeyDown/KeyUp 事件喂）。
         #[pyfunction]
         fn get_mods(_vm: &VirtualMachine) -> u32 {
-            starfish::pygame::key::get_mods()
+            starfish_pygame::key::get_mods()
         }
 
         /// 键名（W3C KeyboardEvent.code 命名——name(K_x) = "KeyX" 等）。
         #[pyfunction]
         fn name(key: PyRef<PyKey>, _vm: &VirtualMachine) -> String {
-            starfish::pygame::key::name(key.0)
+            starfish_pygame::key::name(key.0)
         }
 
         /// 窗口键盘聚焦态。
         #[pyfunction]
         fn get_focused(_vm: &VirtualMachine) -> bool {
-            starfish::pygame::key::get_focused()
+            starfish_pygame::key::get_focused()
         }
 
         /// 键重复软件合成（垫底：自动重复由 OS repeat 标记承载，收下不生效）。
@@ -2445,44 +2445,44 @@ pub(crate) mod pygame {
         /// 鼠标位置（客户区物理像素，y 向下；事件泵前为 (0, 0)）。
         #[pyfunction]
         fn get_pos(_vm: &VirtualMachine) -> (i32, i32) {
-            starfish::pygame::mouse::get_pos()
+            starfish_pygame::mouse::get_pos()
         }
 
         /// 左/中/右三键按下态（pygame 惯例）。
         #[pyfunction]
         fn get_pressed(_vm: &VirtualMachine) -> (bool, bool, bool) {
-            starfish::pygame::mouse::get_pressed()
+            starfish_pygame::mouse::get_pressed()
         }
 
         /// 相对位移（自上次 get_rel 调用起；连续调用逐段累加）。
         #[pyfunction]
         fn get_rel(_vm: &VirtualMachine) -> (i32, i32) {
-            starfish::pygame::mouse::get_rel()
+            starfish_pygame::mouse::get_rel()
         }
 
         /// 光标可见态（窗口层 set_cursor_visible；移动端无光标语义）。
         #[pyfunction]
         fn set_visible(visible: bool, _vm: &VirtualMachine) {
-            starfish::pygame::mouse::set_visible(visible)
+            starfish_pygame::mouse::set_visible(visible)
         }
 
         /// 光标可见态查询。
         #[pyfunction]
         fn get_visible(_vm: &VirtualMachine) -> bool {
-            starfish::pygame::mouse::get_visible()
+            starfish_pygame::mouse::get_visible()
         }
 
         /// 窗口鼠标聚焦态（简化：与键盘聚焦同源）。
         #[pyfunction]
         fn get_focused(_vm: &VirtualMachine) -> bool {
-            starfish::pygame::mouse::get_focused()
+            starfish_pygame::mouse::get_focused()
         }
 
         /// warp 光标（垫底：仅更新状态表，不扭曲真实光标、无合成事件
         /// ——starfish-window v1 无光标扭曲能力）。
         #[pyfunction]
         fn set_pos(pos: SfPoint, _vm: &VirtualMachine) {
-            starfish::pygame::mouse::set_pos(pos.0, pos.1)
+            starfish_pygame::mouse::set_pos(pos.0, pos.1)
         }
     }
 
@@ -2495,7 +2495,7 @@ pub(crate) mod pygame {
     pub(crate) mod gamepad {
         use rustpython_vm::{PyObjectRef, PyResult, VirtualMachine};
 
-        use starfish::base::gamepad::{Axis, Button};
+        use starfish_gamepad::{Axis, Button};
 
         // ── 按钮常量（标准布局索引；pygame.controller 同惯例）──
         #[pyattr]
@@ -2560,13 +2560,13 @@ pub(crate) mod pygame {
         /// 已连接手柄数（0 = 无手柄）。
         #[pyfunction]
         fn get_count(_vm: &VirtualMachine) -> usize {
-            starfish::pygame::gamepad::get_count()
+            starfish_pygame::gamepad::get_count()
         }
 
         /// 已连接手柄编号列表（连接顺序；平台内自增）。
         #[pyfunction]
         fn connected(vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-            let ids: Vec<PyObjectRef> = starfish::pygame::gamepad::connected()
+            let ids: Vec<PyObjectRef> = starfish_pygame::gamepad::connected()
                 .into_iter()
                 .map(|id| vm.ctx.new_int(id as i64).into())
                 .collect();
@@ -2576,31 +2576,31 @@ pub(crate) mod pygame {
         /// 第一个连接的手柄编号（单手柄便捷入口；无 = None）。
         #[pyfunction]
         fn primary(_vm: &VirtualMachine) -> Option<usize> {
-            starfish::pygame::gamepad::primary()
+            starfish_pygame::gamepad::primary()
         }
 
         /// 指定手柄是否已连接。
         #[pyfunction]
         fn is_connected(id: usize, _vm: &VirtualMachine) -> bool {
-            starfish::pygame::gamepad::is_connected(id)
+            starfish_pygame::gamepad::is_connected(id)
         }
 
         /// 按键按下态（未连接 = False）。
         #[pyfunction]
         fn get_pressed(id: usize, btn: u8, vm: &VirtualMachine) -> PyResult<bool> {
-            Ok(starfish::pygame::gamepad::is_pressed(id, map_btn(btn, vm)?))
+            Ok(starfish_pygame::gamepad::is_pressed(id, map_btn(btn, vm)?))
         }
 
         /// 本帧新按下（上帧未按下；未连接 = False）。
         #[pyfunction]
         fn just_pressed(id: usize, btn: u8, vm: &VirtualMachine) -> PyResult<bool> {
-            Ok(starfish::pygame::gamepad::just_pressed(id, map_btn(btn, vm)?))
+            Ok(starfish_pygame::gamepad::just_pressed(id, map_btn(btn, vm)?))
         }
 
         /// 轴值（摇杆 -1.0..=1.0；扳机 0..=1.0；未连接 = 0.0）。
         #[pyfunction]
         fn get_axis(id: usize, axis: u8, vm: &VirtualMachine) -> PyResult<f32> {
-            Ok(starfish::pygame::gamepad::axis(id, map_axis(axis, vm)?))
+            Ok(starfish_pygame::gamepad::axis(id, map_axis(axis, vm)?))
         }
     }
 
@@ -2616,7 +2616,7 @@ pub(crate) mod pygame {
         /// 当前按住的手指数（0 = 无触摸；桌面恒 0）。
         #[pyfunction]
         fn get_count(_vm: &VirtualMachine) -> usize {
-            starfish::pygame::touch::get_count()
+            starfish_pygame::touch::get_count()
         }
 
         /// 活动手指快照：[{"id", "x", "y", "phase"}] 按 id 升序。
@@ -2625,14 +2625,14 @@ pub(crate) mod pygame {
         #[pyfunction]
         fn get_fingers(vm: &VirtualMachine) -> PyResult<PyObjectRef> {
             let mut items: Vec<PyObjectRef> = Vec::new();
-            for f in starfish::pygame::touch::fingers() {
+            for f in starfish_pygame::touch::fingers() {
                 let d = vm.ctx.new_dict();
                 d.set_item("id", vm.ctx.new_int(f.id as i64).into(), vm)?;
                 d.set_item("x", vm.ctx.new_int(f.x as i64).into(), vm)?;
                 d.set_item("y", vm.ctx.new_int(f.y as i64).into(), vm)?;
                 let phase = match f.phase {
-                    starfish::base::window::TouchPhase::Started => "started",
-                    starfish::base::window::TouchPhase::Moved => "moved",
+                    starfish_we::TouchPhase::Started => "started",
+                    starfish_we::TouchPhase::Moved => "moved",
                     _ => "unknown",
                 };
                 d.set_item("phase", vm.ctx.new_str(phase).into(), vm)?;
@@ -2644,7 +2644,7 @@ pub(crate) mod pygame {
         /// 指定手指的位置 (x, y)（客户区物理像素，y 向下）；无该手指 = None。
         #[pyfunction]
         fn get_pos(finger_id: u64, _vm: &VirtualMachine) -> Option<(i32, i32)> {
-            starfish::pygame::touch::get_pos(finger_id)
+            starfish_pygame::touch::get_pos(finger_id)
         }
     }
 
@@ -2670,7 +2670,7 @@ pub(crate) mod pygame {
             ));
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let data = pollster::block_on(starfish::base::io::read(path_str(&path, vm)?))
+                let data = pollster::block_on(starfish_io::read(path_str(&path, vm)?))
                     .map_err(|e| vm.new_value_error(format!("io 读取失败: {e}")))?;
                 Ok(vm.ctx.new_bytes(data).into())
             }
@@ -2685,7 +2685,7 @@ pub(crate) mod pygame {
             ));
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let data = pollster::block_on(starfish::base::io::read(path_str(&path, vm)?))
+                let data = pollster::block_on(starfish_io::read(path_str(&path, vm)?))
                     .map_err(|e| vm.new_value_error(format!("io 读取失败: {e}")))?;
                 Ok(String::from_utf8_lossy(&data).into_owned())
             }
@@ -2706,7 +2706,7 @@ pub(crate) mod pygame {
                 } else {
                     data.try_bytes_like(vm, |b| b.to_vec())?
                 };
-                pollster::block_on(starfish::base::io::write(path_str(&path, vm)?, bytes))
+                pollster::block_on(starfish_io::write(path_str(&path, vm)?, bytes))
                     .map_err(|e| vm.new_value_error(format!("io 写入失败: {e}")))
             }
         }
@@ -2719,7 +2719,7 @@ pub(crate) mod pygame {
                 "pygame.io: Web 端 v1 不提供同步 io（宿主预加载/异步资源装载承载）",
             ));
             #[cfg(not(target_arch = "wasm32"))]
-            pollster::block_on(starfish::base::io::exists(path_str(&path, vm)?))
+            pollster::block_on(starfish_io::exists(path_str(&path, vm)?))
                 .map_err(|e| vm.new_value_error(format!("io exists 失败: {e}")))
         }
 
@@ -2735,7 +2735,7 @@ pub(crate) mod pygame {
                 let t = text
                     .to_str()
                     .ok_or_else(|| vm.new_value_error("内容含非 UTF-8 字符"))?;
-                pollster::block_on(starfish::base::io::write_text(path_str(&path, vm)?, t))
+                pollster::block_on(starfish_io::write_text(path_str(&path, vm)?, t))
                     .map_err(|e| vm.new_value_error(format!("io 写入失败: {e}")))
             }
         }
@@ -2748,7 +2748,7 @@ pub(crate) mod pygame {
             return Err(vm.new_value_error("pygame.io: Web 端基准 = URL 前缀，无同步设置面"));
             #[cfg(not(target_arch = "wasm32"))]
             {
-                starfish::base::io::set_base_dir(path_str(&dir, vm)?);
+                starfish_io::set_base_dir(path_str(&dir, vm)?);
                 Ok(())
             }
         }
@@ -2766,7 +2766,7 @@ pub(crate) mod pygame {
         use rustpython_vm::{PyObjectRef, Py, PyPayload, PyResult, VirtualMachine, builtins::{PyStrRef, PyType}};
         use std::cell::RefCell;
 
-        use starfish::base::net::{ConnState, TcpConn, UdpSock};
+        use starfish_net::{ConnState, TcpConn, UdpSock};
 
         fn data_bytes(data: PyObjectRef, vm: &VirtualMachine) -> PyResult<Vec<u8>> {
             if let Some(s) = data.downcast_ref::<rustpython_vm::builtins::PyStr>() {
@@ -2939,7 +2939,7 @@ pub(crate) mod pygame {
         use rustpython_vm::convert::TryFromObject;
         use rustpython_vm::{PyObjectRef, PyPayload, PyResult, VirtualMachine, builtins::PyStrRef};
 
-        use starfish::base::dialog::PickedFile;
+        use starfish_dialog::PickedFile;
 
         /// PickedFile：用户选取的文件（桌面持路径惰性读盘）。
         #[derive(PyPayload)]
@@ -3034,7 +3034,7 @@ pub(crate) mod pygame {
                     None => Vec::new(),
                 };
                 let filters = leak_filters(&filters);
-                let picked = pollster::block_on(starfish::base::dialog::pick_file(
+                let picked = pollster::block_on(starfish_dialog::pick_file(
                     args.title.as_deref(),
                     &filters,
                 ))
@@ -3076,7 +3076,7 @@ pub(crate) mod pygame {
                     .to_str()
                     .ok_or_else(|| vm.new_value_error("文件名含非 UTF-8 字符"))?;
                 let bytes = data_bytes(data, vm)?;
-                let saved = pollster::block_on(starfish::base::dialog::save_bytes(name, bytes))
+                let saved = pollster::block_on(starfish_dialog::save_bytes(name, bytes))
                     .map_err(|e| vm.new_value_error(format!("dialog: {e}")))?;
                 Ok(saved.is_some())
             }
@@ -3130,12 +3130,12 @@ pub(crate) mod pygame {
             let c = color.0;
             match route(&f, vm)? {
                 Target::Surf(s) => {
-                    starfish::pygame::draw::rect(&*s.surface, c,
-                        starfish::pygame::Rect::new(x, y, 1, 1), 0)
+                    starfish_pygame::draw::rect(&*s.surface, c,
+                        starfish_pygame::Rect::new(x, y, 1, 1), 0)
                 }
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::rect(t, c,
-                        starfish::pygame::Rect::new(x, y, 1, 1), 0)
+                    starfish_pygame::draw::rect(t, c,
+                        starfish_pygame::Rect::new(x, y, 1, 1), 0)
                 })?,
             };
             Ok(())
@@ -3180,9 +3180,9 @@ pub(crate) mod pygame {
         ) -> PyResult<()> {
             let c = color.0;
             match route(&f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::line(&*s.surface, c, (x1, y1), (x2, y2), 1),
+                Target::Surf(s) => starfish_pygame::draw::line(&*s.surface, c, (x1, y1), (x2, y2), 1),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::line(t, c, (x1, y1), (x2, y2), 1)
+                    starfish_pygame::draw::line(t, c, (x1, y1), (x2, y2), 1)
                 })?,
             };
             Ok(())
@@ -3216,9 +3216,9 @@ pub(crate) mod pygame {
             let c = color.0;
             let r = radius.max(0) as u32;
             match route(&f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::circle(&*s.surface, c, (x, y), r, 1),
+                Target::Surf(s) => starfish_pygame::draw::circle(&*s.surface, c, (x, y), r, 1),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::circle(t, c, (x, y), r, 1)
+                    starfish_pygame::draw::circle(t, c, (x, y), r, 1)
                 })?,
             };
             Ok(())
@@ -3250,9 +3250,9 @@ pub(crate) mod pygame {
             let c = color.0;
             let r = radius.max(0) as u32;
             match route(&f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::circle(&*s.surface, c, (x, y), r, 0),
+                Target::Surf(s) => starfish_pygame::draw::circle(&*s.surface, c, (x, y), r, 0),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::circle(t, c, (x, y), r, 0)
+                    starfish_pygame::draw::circle(t, c, (x, y), r, 0)
                 })?,
             };
             Ok(())
@@ -3270,11 +3270,11 @@ pub(crate) mod pygame {
             vm: &VirtualMachine,
         ) -> PyResult<()> {
             let c = color.0;
-            let rect = starfish::pygame::Rect::new(x - rx, y - ry, rx.max(0) * 2, ry.max(0) * 2);
+            let rect = starfish_pygame::Rect::new(x - rx, y - ry, rx.max(0) * 2, ry.max(0) * 2);
             match route(&f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::ellipse(&*s.surface, c, rect, 1),
+                Target::Surf(s) => starfish_pygame::draw::ellipse(&*s.surface, c, rect, 1),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::ellipse(t, c, rect, 1)
+                    starfish_pygame::draw::ellipse(t, c, rect, 1)
                 })?,
             };
             Ok(())
@@ -3306,11 +3306,11 @@ pub(crate) mod pygame {
             vm: &VirtualMachine,
         ) -> PyResult<()> {
             let c = color.0;
-            let rect = starfish::pygame::Rect::new(x - rx, y - ry, rx.max(0) * 2, ry.max(0) * 2);
+            let rect = starfish_pygame::Rect::new(x - rx, y - ry, rx.max(0) * 2, ry.max(0) * 2);
             match route(&f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::ellipse(&*s.surface, c, rect, 0),
+                Target::Surf(s) => starfish_pygame::draw::ellipse(&*s.surface, c, rect, 0),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::ellipse(t, c, rect, 0)
+                    starfish_pygame::draw::ellipse(t, c, rect, 0)
                 })?,
             };
             Ok(())
@@ -3330,15 +3330,15 @@ pub(crate) mod pygame {
             vm: &VirtualMachine,
         ) -> PyResult<()> {
             let c = color.0;
-            let rect = starfish::pygame::Rect::new(x - radius, y - radius, radius.max(0) * 2, radius.max(0) * 2);
+            let rect = starfish_pygame::Rect::new(x - radius, y - radius, radius.max(0) * 2, radius.max(0) * 2);
             let (s, e) = (
                 (start_angle as f32).to_radians(),
                 (stop_angle as f32).to_radians(),
             );
             match route(&f, vm)? {
-                Target::Surf(sfc) => starfish::pygame::draw::arc(&*sfc.surface, c, rect, s, e, 1),
+                Target::Surf(sfc) => starfish_pygame::draw::arc(&*sfc.surface, c, rect, s, e, 1),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::arc(t, c, rect, s, e, 1)
+                    starfish_pygame::draw::arc(t, c, rect, s, e, 1)
                 })?,
             };
             Ok(())
@@ -3397,9 +3397,9 @@ pub(crate) mod pygame {
             let c = color.0;
             let pts = SfPoints(vec![(x1, y1), (x2, y2), (x3, y3)]);
             match route(f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::polygon(&*s.surface, c, &pts.0, 0),
+                Target::Surf(s) => starfish_pygame::draw::polygon(&*s.surface, c, &pts.0, 0),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::polygon(t, c, &pts.0, 0)
+                    starfish_pygame::draw::polygon(t, c, &pts.0, 0)
                 })?,
             };
             Ok(())
@@ -3420,9 +3420,9 @@ pub(crate) mod pygame {
             let c = color.0;
             let pts = SfPoints(vec![(x1, y1), (x2, y2), (x3, y3)]);
             match route(f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::polygon(&*s.surface, c, &pts.0, 1),
+                Target::Surf(s) => starfish_pygame::draw::polygon(&*s.surface, c, &pts.0, 1),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::polygon(t, c, &pts.0, 1)
+                    starfish_pygame::draw::polygon(t, c, &pts.0, 1)
                 })?,
             };
             Ok(())
@@ -3433,9 +3433,9 @@ pub(crate) mod pygame {
         fn polygon(f: PyObjectRef, points: SfPoints, color: SfColor, vm: &VirtualMachine) -> PyResult<()> {
             let c = color.0;
             match route(&f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::polygon(&*s.surface, c, &points.0, 1),
+                Target::Surf(s) => starfish_pygame::draw::polygon(&*s.surface, c, &points.0, 1),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::polygon(t, c, &points.0, 1)
+                    starfish_pygame::draw::polygon(t, c, &points.0, 1)
                 })?,
             };
             Ok(())
@@ -3457,9 +3457,9 @@ pub(crate) mod pygame {
         ) -> PyResult<()> {
             let c = color.0;
             match route(&f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::polygon(&*s.surface, c, &points.0, 0),
+                Target::Surf(s) => starfish_pygame::draw::polygon(&*s.surface, c, &points.0, 0),
                 Target::Active => bridge::with_session(vm, |t| {
-                    starfish::pygame::draw::polygon(t, c, &points.0, 0)
+                    starfish_pygame::draw::polygon(t, c, &points.0, 0)
                 })?,
             };
             Ok(())
@@ -3469,10 +3469,10 @@ pub(crate) mod pygame {
         #[pyfunction]
         fn rectangle(f: PyObjectRef, rect: SfRect, color: SfColor, vm: &VirtualMachine) -> PyResult<()> {
             let c = color.0;
-            let r = starfish::pygame::Rect::new(rect.x, rect.y, rect.w, rect.h);
+            let r = starfish_pygame::Rect::new(rect.x, rect.y, rect.w, rect.h);
             match route(&f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::rect(&*s.surface, c, r, 1),
-                Target::Active => bridge::with_session(vm, |t| starfish::pygame::draw::rect(t, c, r, 1))?,
+                Target::Surf(s) => starfish_pygame::draw::rect(&*s.surface, c, r, 1),
+                Target::Active => bridge::with_session(vm, |t| starfish_pygame::draw::rect(t, c, r, 1))?,
             };
             Ok(())
         }
@@ -3481,10 +3481,10 @@ pub(crate) mod pygame {
         #[pyfunction(name = "box")]
         fn box_(f: PyObjectRef, rect: SfRect, color: SfColor, vm: &VirtualMachine) -> PyResult<()> {
             let c = color.0;
-            let r = starfish::pygame::Rect::new(rect.x, rect.y, rect.w, rect.h);
+            let r = starfish_pygame::Rect::new(rect.x, rect.y, rect.w, rect.h);
             match route(&f, vm)? {
-                Target::Surf(s) => starfish::pygame::draw::rect(&*s.surface, c, r, 0),
-                Target::Active => bridge::with_session(vm, |t| starfish::pygame::draw::rect(t, c, r, 0))?,
+                Target::Surf(s) => starfish_pygame::draw::rect(&*s.surface, c, r, 0),
+                Target::Active => bridge::with_session(vm, |t| starfish_pygame::draw::rect(t, c, r, 0))?,
             };
             Ok(())
         }
@@ -3526,7 +3526,7 @@ pub(crate) mod pygame {
         use rustpython_vm::{
             Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine, builtins::PyType,
         };
-        use starfish::pygame::mask::Mask as SfMask;
+        use starfish_pygame::mask::Mask as SfMask;
 
         use crate::rpy::args::SfPoint;
 
@@ -3685,7 +3685,7 @@ pub(crate) mod pygame {
     #[pymodule]
     pub(crate) mod permission {
         use rustpython_vm::{PyResult, VirtualMachine};
-        use starfish::pygame::permission::{self as sf_perm, Permission};
+        use starfish_pygame::permission::{self as sf_perm, Permission};
 
         /// 权限标识：pygame.permission.MICROPHONE / INTERNET
         #[pyattr]
@@ -3721,7 +3721,7 @@ pub(crate) mod pygame {
             Py, PyPayload, PyRef, PyResult, VirtualMachine,
             builtins::{PyStrRef, PyType},
         };
-        use starfish::pygame::video::{VideoSystem as SfVideoSystem, Video as SfVideo};
+        use starfish_pygame::video::{VideoSystem as SfVideoSystem, Video as SfVideo};
 
         /// pygame.video.VideoSystem——解码系统入口（set_mode 后创建）。
         #[derive(PyPayload)]
@@ -3873,14 +3873,14 @@ pub(crate) mod pygame {
     impl PyTargetsSession {
         #[pymethod]
         fn __enter__(zelf: PyRef<Self>) -> PyRef<Self> {
-            starfish::pygame::render::session::begin_targets(&zelf.surfaces);
+            starfish_pygame::render::session::begin_targets(&zelf.surfaces);
             zelf
         }
 
         /// 异常不吞（返回 False 交回宿主壳打印收口）。
         #[pymethod]
         fn __exit__(&self, _exc_info: FuncArgs) -> bool {
-            starfish::pygame::render::session::end_targets();
+            starfish_pygame::render::session::end_targets();
             false
         }
 
@@ -3888,7 +3888,7 @@ pub(crate) mod pygame {
         fn fill(&self, args: args::FillArgs, vm: &VirtualMachine) -> PyResult<()> {
             let rgba = args.color.0;
             bridge::with_mrt_session(vm, |p| {
-                use starfish::pygame::render::DrawTarget;
+                use starfish_pygame::render::DrawTarget;
                 p.fill(rgba);
             })
         }
@@ -3896,10 +3896,10 @@ pub(crate) mod pygame {
         #[pymethod]
         fn rect(&self, args: args::DrawRectArgs, vm: &VirtualMachine) -> PyResult<()> {
             bridge::with_mrt_session(vm, |p| {
-                starfish::pygame::draw::rect(
+                starfish_pygame::draw::rect(
                     p,
                     args.color.0,
-                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    starfish_pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                     args.width.unwrap_or(0).max(0) as u32,
                 );
             })
@@ -3908,7 +3908,7 @@ pub(crate) mod pygame {
         #[pymethod]
         fn circle(&self, args: args::DrawCircleArgs, vm: &VirtualMachine) -> PyResult<()> {
             bridge::with_mrt_session(vm, |p| {
-                starfish::pygame::draw::circle(
+                starfish_pygame::draw::circle(
                     p,
                     args.color.0,
                     (args.center.0, args.center.1),
@@ -3921,7 +3921,7 @@ pub(crate) mod pygame {
         #[pymethod]
         fn line(&self, args: args::DrawLineArgs, vm: &VirtualMachine) -> PyResult<()> {
             bridge::with_mrt_session(vm, |p| {
-                starfish::pygame::draw::line(
+                starfish_pygame::draw::line(
                     p,
                     args.color.0,
                     (args.start.0, args.start.1),
@@ -3934,7 +3934,7 @@ pub(crate) mod pygame {
         #[pymethod]
         fn polygon(&self, args: args::DrawPolygonArgs, vm: &VirtualMachine) -> PyResult<()> {
             bridge::with_mrt_session(vm, |p| {
-                starfish::pygame::draw::polygon(
+                starfish_pygame::draw::polygon(
                     p,
                     args.color.0,
                     &args.points.0,
@@ -3946,10 +3946,10 @@ pub(crate) mod pygame {
         #[pymethod]
         fn ellipse(&self, args: args::DrawEllipseArgs, vm: &VirtualMachine) -> PyResult<()> {
             bridge::with_mrt_session(vm, |p| {
-                starfish::pygame::draw::ellipse(
+                starfish_pygame::draw::ellipse(
                     p,
                     args.color.0,
-                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    starfish_pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                     args.width.unwrap_or(0).max(0) as u32,
                 );
             })
@@ -3958,10 +3958,10 @@ pub(crate) mod pygame {
         #[pymethod]
         fn arc(&self, args: args::DrawArcArgs, vm: &VirtualMachine) -> PyResult<()> {
             bridge::with_mrt_session(vm, |p| {
-                starfish::pygame::draw::arc(
+                starfish_pygame::draw::arc(
                     p,
                     args.color.0,
-                    starfish::pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
+                    starfish_pygame::Rect::new(args.rect.x, args.rect.y, args.rect.w, args.rect.h),
                     args.start_angle.into_float() as f32,
                     args.stop_angle.into_float() as f32,
                     args.width.unwrap_or(1).max(0) as u32,
@@ -3978,7 +3978,7 @@ pub(crate) mod pygame {
             vm: &VirtualMachine,
         ) -> PyResult<PyObjectRef> {
             bridge::with_mrt_session(vm, |p| {
-                use starfish::pygame::render::DrawTarget;
+                use starfish_pygame::render::DrawTarget;
                 p.blit(&src.surface, (dest.0, dest.1))
             })
             .map(|r| PyRect(Cell::new(r)).into_ref(&vm.ctx).into())
@@ -4017,7 +4017,7 @@ pub(crate) mod pygame {
             Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
             builtins::{PyStrRef, PyType},
         };
-        use starfish::pygame::sprite as sf_sprite;
+        use starfish_pygame::sprite as sf_sprite;
 
         use crate::rpy::args::SfPoint;
 

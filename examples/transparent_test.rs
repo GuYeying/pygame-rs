@@ -14,4 +14,4 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     rpy::testhost::run(SCRIPT, "transparent_test", true).await
 }
 
-starfish::app_entry!(run());
+starfish_std::app_entry!(run());

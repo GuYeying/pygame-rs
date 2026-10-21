@@ -54,9 +54,9 @@ use rustpython_vm::{PyObjectRef, PyResult, VirtualMachine};
 
 use crate::rpy::args::{QuadCornersArgs, SfColor, SfPoint, SfRect};
 
-use starfish::base::audio::{AudioMixer, SoundData};
-use starfish::pygame::render::{BatchTopology, GeometryKind};
-use starfish::pygame::render::RenderPass;
+use starfish_audio::{AudioMixer, SoundData};
+use starfish_pygame::render::{BatchTopology, GeometryKind};
+use starfish_pygame::render::RenderPass;
 
 /// 诊断日志（println + console_log + 文件 + TCP；与宿主壳 dlog 同构）。
 /// 文件路径与 binding_probe 的 LOG_PATH 保持一致。
@@ -65,7 +65,7 @@ use starfish::pygame::render::RenderPass;
 /// 目标机 IP 按当次真机环境改 [`DEVLOG_TCP_TARGET`]。
 pub fn devlog(msg: &str) {
     println!("{}", msg);
-    starfish::base::debug::console_log(msg);
+    starfish_std::debug::console_log(msg);
     const LOG_PATH: &str = "/sdcard/Download/bp_log.txt";
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
@@ -108,7 +108,7 @@ pub(crate) fn with_mrt_session<T>(
     vm: &VirtualMachine,
     f: impl FnOnce(&RenderPass<'static>) -> T,
 ) -> PyResult<T> {
-    starfish::pygame::render::session::with_targets(f).map_err(|_| {
+    starfish_pygame::render::session::with_targets(f).map_err(|_| {
         vm.new_value_error("无活跃 MRT 会话（须在 `with pygame.targets([...])` 块内调用）")
     })
 }
@@ -118,7 +118,7 @@ pub(crate) fn with_session<T>(
     vm: &VirtualMachine,
     f: impl FnOnce(&RenderPass<'static>) -> T,
 ) -> PyResult<T> {
-    starfish::pygame::render::session::with_screen(f).map_err(|_| {
+    starfish_pygame::render::session::with_screen(f).map_err(|_| {
         vm.new_type_error("draw 需在 `with screen.render():` 会话内调用（ADR-5）")
     })
 }
@@ -126,7 +126,7 @@ pub(crate) fn with_session<T>(
 // ── with_batch 直通口收参壳（低层几何：downcast/白名单校验归此，
 //    数字核心归引擎 DrawTarget default method）────────────────────
 
-use starfish::pygame::render::DrawTarget as BdTarget;
+use starfish_pygame::render::DrawTarget as BdTarget;
 
 /// blit_area 收参壳：src 须为 pygame.Surface、area 为正（其余 UV 换算/
 /// flush 语义归引擎 `DrawTarget::blit_area`）。
@@ -137,7 +137,7 @@ pub(crate) fn blit_area<T: BdTarget>(
     area: SfRect,
     color: Option<SfColor>,
     vm: &VirtualMachine,
-) -> PyResult<starfish::pygame::Rect> {
+) -> PyResult<starfish_pygame::Rect> {
     let src = src_obj
         .downcast_ref::<crate::rpy::native_pygame::PySurface>()
         .ok_or_else(|| vm.new_type_error("src 须为 pygame.Surface 实例"))?;
@@ -147,7 +147,7 @@ pub(crate) fn blit_area<T: BdTarget>(
     Ok(target.blit_area(
         &src.surface,
         (dest.0, dest.1),
-        starfish::pygame::Rect::new(area.x, area.y, area.w, area.h),
+        starfish_pygame::Rect::new(area.x, area.y, area.w, area.h),
         color.map(|c| c.0).unwrap_or([255, 255, 255, 255]),
     ))
 }
@@ -250,7 +250,7 @@ pub(crate) fn with_mixer<R>(
     vm: &VirtualMachine,
     f: impl FnOnce(&mut AudioMixer) -> R,
 ) -> PyResult<R> {
-    starfish::pygame::mixer::with(f)
+    starfish_pygame::mixer::with(f)
         .map_err(|e| vm.new_value_error(format!("音频设备初始化失败: {e:?}")))
 }
 
@@ -262,7 +262,7 @@ pub(crate) fn sound_source_to_data(
 ) -> PyResult<Arc<SoundData>> {
     match source {
         // Font(None) 惯例延续：无参 = 内嵌标准提示音
-        None => Ok(starfish::pygame::mixer::beep()),
+        None => Ok(starfish_pygame::mixer::beep()),
         Some(o) => {
             if let Some(s) = o.downcast_ref::<rustpython_vm::builtins::PyStr>() {
                 let t = s

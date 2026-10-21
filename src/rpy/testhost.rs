@@ -15,8 +15,8 @@
 //! ```
 
 use crate::rpy;
-use starfish::base::window::next_frame;
-use starfish::pygame::display;
+use starfish_we::next_frame;
+use starfish_pygame::display;
 use std::cell::RefCell;
 use std::io::Write;
 
@@ -25,7 +25,7 @@ use std::io::Write;
 fn dlog(tag: &str, msg: &str) {
     let line = format!("[{tag}] {msg}");
     println!("{line}");
-    starfish::base::debug::console_log(&line);
+    starfish_std::debug::console_log(&line);
     #[cfg(target_os = "android")]
     net_log(&line);
     #[cfg(target_os = "android")]
@@ -68,14 +68,14 @@ async fn preload_cjk(tag: &str) {
     #[cfg(windows)]
     match std::fs::read("C:/Windows/Fonts/msyh.ttc") {
         Ok(b) => {
-            starfish::pygame::font::preload("cjk", b);
+            starfish_pygame::font::preload("cjk", b);
             dlog(tag, "CJK 字体已预载（系统 msyh.ttc）");
         }
         Err(_) => dlog(tag, "CJK 预载失败（msyh.ttc 不存在）"),
     }
-    match starfish::base::io::read("fonts/cjk.ttf").await {
+    match starfish_io::read("fonts/cjk.ttf").await {
         Ok(b) => {
-            starfish::pygame::font::preload("cjk", b);
+            starfish_pygame::font::preload("cjk", b);
             dlog(tag, "CJK 字体已预载（fonts/cjk.ttf）");
         }
         Err(_) => dlog(tag, "CJK 字体未找到（fonts/cjk.ttf）"),
@@ -93,9 +93,9 @@ async fn preload_cjk(tag: &str) {
         ];
         let mut hit = false;
         for p in CJK_CANDIDATES {
-            match starfish::base::io::read(p).await {
+            match starfish_std::io::read(p).await {
                 Ok(b) => {
-                    starfish::pygame::font::preload("cjk", b);
+                    starfish_pygame::font::preload("cjk", b);
                     dlog(tag, &format!("CJK 字体已预载（系统 {p}）"));
                     hit = true;
                     break;
@@ -116,7 +116,7 @@ async fn preload_cjk(tag: &str) {
 /// - `transparent`：透明窗口创建（TRANSPARENT 创建旗标 + 引擎透明底
 ///   清屏——桌宠/悬浮件形态。透明时跳过铺底，脚本内勿填不透明底色）。
 pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<dyn std::error::Error>> {
-    use starfish::pygame::display as dflags;
+    use starfish_pygame::display as dflags;
     dlog(tag, "starting");
     let flags = if transparent { dflags::TRANSPARENT } else { 0 };
     match display::set_mode_ex((800, 600), flags).await {
@@ -191,7 +191,7 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
     // 主循环（调用方持）：事件泵 → Python 帧步进 → 上屏 → 帧拍
     dlog(tag, "entering frame loop");
     loop {
-        if starfish::pygame::event::pump() {
+        if starfish_pygame::event::pump() {
             dlog(tag, "退出请求，结束");
             break;
         }
@@ -220,12 +220,12 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
             break;
         }
 
-        starfish::pygame::mixer::pump(); // Web 流式解码驱动（桌面 no-op）
+        starfish_pygame::mixer::pump(); // Web 流式解码驱动（桌面 no-op）
         next_frame().await;
     }
     // 先关窗再卸载（RP 卸载期间窗口 ghost）；mixer 显式收口（TLS 析构期）
     display::quit();
-    starfish::pygame::mixer::quit();
+    starfish_pygame::mixer::quit();
     dlog(tag, "main loop ended");
     Ok(())
 }

@@ -457,12 +457,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base64"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
-
-[[package]]
 name = "bit-set"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1484,45 +1478,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gltf"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3ce1918195723ce6ac74e80542c5a96a40c2b26162c1957a5cd70799b8cacf7"
-dependencies = [
- "base64",
- "byteorder",
- "gltf-json",
- "image",
- "lazy_static",
- "serde_json",
- "urlencoding",
-]
-
-[[package]]
-name = "gltf-derive"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14070e711538afba5d6c807edb74bcb84e5dbb9211a3bf5dea0dfab5b24f4c51"
-dependencies = [
- "inflections",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "gltf-json"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6176f9d60a7eab0a877e8e96548605dedbde9190a7ae1e80bbcc1c9af03ab14"
-dependencies = [
- "gltf-derive",
- "serde",
- "serde_derive",
- "serde_json",
-]
-
-[[package]]
 name = "glutin_wgl_sys"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1967,12 +1922,6 @@ dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
 ]
-
-[[package]]
-name = "inflections"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
 
 [[package]]
 name = "inotify"
@@ -3586,14 +3535,31 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "pygame-rs"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "glam",
  "pollster",
  "rustpython-derive",
  "rustpython-pylib",
  "rustpython-vm",
- "starfish",
+ "starfish-audio",
+ "starfish-dialog",
+ "starfish-font",
+ "starfish-gamepad",
+ "starfish-gfx",
+ "starfish-gui",
+ "starfish-io",
+ "starfish-net",
+ "starfish-permission",
+ "starfish-physics",
+ "starfish-pygame",
+ "starfish-render",
+ "starfish-std",
+ "starfish-tilemap",
+ "starfish-time",
+ "starfish-video",
+ "starfish-voxel",
+ "starfish-we",
  "wasm-bindgen",
 ]
 
@@ -4686,19 +4652,184 @@ dependencies = [
 ]
 
 [[package]]
-name = "starfish"
-version = "0.9.25"
+name = "starfish-audio"
+version = "0.9.50"
 dependencies = [
  "bytemuck",
- "console_error_panic_hook",
  "cpal",
- "gilrs",
+ "log",
+ "starfish-dialog",
+ "starfish-permission",
+ "symphonia",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "starfish-dialog"
+version = "0.9.50"
+dependencies = [
+ "js-sys",
+ "log",
+ "rfd 0.15.4",
+ "robius-file-picker",
+ "starfish-permission",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "starfish-font"
+version = "0.9.50"
+dependencies = [
+ "bytemuck",
  "glam",
- "gltf",
+ "image",
+ "starfish-render",
+ "ttf-parser",
+ "wgpu",
+]
+
+[[package]]
+name = "starfish-gamepad"
+version = "0.9.50"
+dependencies = [
+ "gilrs",
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "starfish-gfx"
+version = "0.9.50"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "starfish-render",
+ "wgpu",
+]
+
+[[package]]
+name = "starfish-gui"
+version = "0.9.50"
+
+[[package]]
+name = "starfish-io"
+version = "0.9.50"
+dependencies = [
+ "js-sys",
+ "pollster",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "starfish-net"
+version = "0.9.50"
+dependencies = [
+ "js-sys",
+ "starfish-permission",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "starfish-permission"
+version = "0.9.50"
+dependencies = [
+ "jni 0.21.1",
+ "js-sys",
+ "ndk-context",
+ "robius-android-env",
+ "starfish-std",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "starfish-physics"
+version = "0.9.50"
+
+[[package]]
+name = "starfish-pygame"
+version = "0.9.50"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "image",
+ "js-sys",
+ "log",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "starfish-audio",
+ "starfish-dialog",
+ "starfish-font",
+ "starfish-gamepad",
+ "starfish-gfx",
+ "starfish-io",
+ "starfish-net",
+ "starfish-permission",
+ "starfish-render",
+ "starfish-std",
+ "starfish-time",
+ "starfish-video",
+ "starfish-we",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
+name = "starfish-render"
+version = "0.9.50"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "image",
+ "pollster",
+ "raw-window-handle",
+ "starfish-std",
+ "starfish-we",
+ "thiserror 2.0.21",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
+name = "starfish-std"
+version = "0.9.50"
+dependencies = [
+ "console_error_panic_hook",
+ "pollster",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "starfish-tilemap"
+version = "0.9.50"
+
+[[package]]
+name = "starfish-time"
+version = "0.9.50"
+dependencies = [
+ "web-sys",
+]
+
+[[package]]
+name = "starfish-video"
+version = "0.9.50"
+dependencies = [
  "gstreamer",
  "gstreamer-app",
  "gstreamer-video",
- "image",
  "jni 0.21.1",
  "js-sys",
  "mp4",
@@ -4710,18 +4841,9 @@ dependencies = [
  "objc2-core-video",
  "objc2-foundation",
  "objc2-video-toolbox",
- "once_cell",
- "pollster",
- "raw-window-handle",
- "rfd 0.15.4",
- "robius-android-env",
- "robius-file-picker",
- "serde",
- "serde_json",
- "starfish-we",
+ "starfish-audio",
+ "starfish-std",
  "symphonia",
- "thiserror 2.0.21",
- "ttf-parser",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -4730,17 +4852,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "starfish-voxel"
+version = "0.9.50"
+
+[[package]]
 name = "starfish-we"
-version = "0.2.0"
+version = "0.9.50"
 dependencies = [
  "android-activity",
  "js-sys",
  "objc2",
  "objc2-app-kit",
- "objc2-core-foundation",
  "objc2-foundation",
  "objc2-quartz-core",
  "objc2-ui-kit",
+ "pollster",
  "raw-window-handle",
  "sctk-adwaita",
  "smithay-client-toolkit",

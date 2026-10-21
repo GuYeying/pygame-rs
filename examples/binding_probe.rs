@@ -11,8 +11,8 @@
 //! 运行：`cargo run --release -p pygame-rs --example binding_probe`
 
 use pygame_rs::rpy;
-use starfish::base::window::next_frame;
-use starfish::pygame::display;
+use starfish_we::next_frame;
+use starfish_pygame::display;
 use std::cell::RefCell;
 use std::io::Write;
 
@@ -21,7 +21,7 @@ const LOG_PATH: &str = "/sdcard/Download/bp_log.txt";
 
 fn dlog(msg: &str) {
     println!("{}", msg);
-    starfish::base::debug::console_log(msg);
+    starfish_std::debug::console_log(msg);
     #[cfg(target_os = "android")]
     net_log(msg);
     if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -64,7 +64,7 @@ const SCRIPT: &str = include_str!("binding_probe.py");
 /// 加载进度帧（genesis/字体预载阻塞主线程——静态帧给用户"活着"的反馈）。
 /// pct: 0..=100。固定 800×600 坐标（壳自控 set_mode 尺寸）。
 fn loading_frame(pct: u32) {
-    let screen = starfish::pygame::display::get_screen();
+    let screen = starfish_pygame::display::get_screen();
     //screen.fill([30, 30, 46, 255]);
     // 底部进度条（背景条 + 前景条；quad 直推——Screen 无 &T DrawTarget 转发）
     let pct = pct.min(100) as f32;
@@ -82,11 +82,11 @@ fn loading_frame(pct: u32) {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 时基 = base::time 跨平台时钟（std Instant 在 wasm32-unknown-unknown
     // 上 panic——unsupported.rs，批次二十四 wasm 启动 panic 根因）
-    let t0 = starfish::base::time::since_start_ms();
+    let t0 = starfish_time::since_start_ms();
     let stage = |name: &str| {
         dlog(&format!(
             "[t] +{}ms {name}",
-            starfish::base::time::since_start_ms() - t0
+            starfish_time::since_start_ms() - t0
         ));
     };
 
@@ -138,7 +138,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     match std::fs::read("Canterbury.ttf") {
         Ok(b) => {
-            starfish::pygame::font::preload("canterbury", b);
+            starfish_pygame::font::preload("canterbury", b);
             dlog("[binding_probe] Canterbury 已预载（哥特风演示）");
         }
         Err(_) => dlog("[binding_probe] Canterbury.ttf 未找到（跳过）"),
@@ -146,14 +146,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     match std::fs::read("C:/Windows/Fonts/msyh.ttc") {
         Ok(b) => {
-            starfish::pygame::font::preload("cjk", b);
+            starfish_pygame::font::preload("cjk", b);
             dlog("[binding_probe] CJK 字体已预载（系统 msyh.ttc）");
         }
         Err(_) => dlog("[binding_probe] CJK 预载失败（msyh.ttc 不存在）"),
     }
-    match starfish::base::io::read("fonts/cjk.ttf").await {
+    match starfish_io::read("fonts/cjk.ttf").await {
         Ok(b) => {
-            starfish::pygame::font::preload("cjk", b);
+            starfish_pygame::font::preload("cjk", b);
             dlog("[binding_probe] CJK 字体已预载（fonts/cjk.ttf）");
         }
         Err(_) => dlog("[binding_probe] CJK 字体未找到（fonts/cjk.ttf，中文将缺字）"),
@@ -259,7 +259,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut frames: u32 = 0;
 
     loop {
-        if starfish::pygame::event::pump() {
+        if starfish_pygame::event::pump() {
             dlog("[binding_probe] 退出请求，结束");
             break;
         }
@@ -292,19 +292,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         if frames <= 3 {
             dlog(&format!(
                 "[t] +{}ms frame #{frames} presented",
-                starfish::base::time::since_start_ms() - t0
+                starfish_time::since_start_ms() - t0
             ));
         }
 
-        starfish::pygame::mixer::pump();  // Web 流式解码驱动（桌面 no-op）
+        starfish_pygame::mixer::pump();  // Web 流式解码驱动（桌面 no-op）
         next_frame().await;
     }
     // 先关窗再卸载（避免 RP 卸载期间窗口 ghost 无响应）；
     // 音频混音器显式收口（cpal 流不留到主线程 TLS 析构期）
     display::quit();
-    starfish::pygame::mixer::quit();
+    starfish_pygame::mixer::quit();
     dlog("[binding_probe] main loop ended");
     Ok(())
 }
 
-starfish::app_entry!(run());
+starfish_std::app_entry!(run());

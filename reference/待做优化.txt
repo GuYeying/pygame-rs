@@ -4,9 +4,6 @@
 3.对于绑定，我好奇是现在对mixer的其他功能绑定了么，比如effect，这个也是极具特色的东西,以及event的CustomEvent也是否绑定了。
 
 
-小修改
-5.对于PySession和PySurfaceSession，PyTargetsSession，我认为他们代码靠在一起比较方便梳理，然后PySession可以改为PyScreenSession来优化可读性。
-
 
 中修改：
 1.对于基础层完成后，我们是否需要将native_pygame的impls慢慢移动到pygame_impls模块里呢？

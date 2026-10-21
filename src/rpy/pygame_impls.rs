@@ -14,9 +14,9 @@ use rustpython_vm::{
     Py, PyObject, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
     builtins::{PyStr, PyType},
 };
-use starfish::pygame::color::Color as EngineColor;
-use starfish::pygame::Rect as EngineRect;
-use starfish::pygame::render::{DrawTarget, Surface as SfSurface};
+use starfish_pygame::color::Color as EngineColor;
+use starfish_pygame::Rect as EngineRect;
+use starfish_pygame::render::{DrawTarget, Surface as SfSurface};
 
 use crate::rpy::native_pygame::pygame::font::PyFont;
 use crate::rpy::native_pygame::pygame::DEFAULT_FONT;
@@ -594,7 +594,7 @@ impl Constructor for PySurface {
     ) -> PyResult<Self> {
         let size = (args.size.0.max(0) as u32, args.size.1.max(0) as u32);
         let surface = if args.depth_buffer.unwrap_or(false) {
-            starfish::pygame::render::Surface::with_depth(size)
+            starfish_pygame::render::Surface::with_depth(size)
         } else {
             SfSurface::new(size)
         };
@@ -624,7 +624,7 @@ impl PySurface {
     #[pymethod]
     fn set_clip(&self, rect: Option<SfRect>, _vm: &VirtualMachine) {
         self.surface.set_clip(rect.map(|r| {
-            starfish::pygame::Rect::new(r.x, r.y, r.w, r.h)
+            starfish_pygame::Rect::new(r.x, r.y, r.w, r.h)
         }));
     }
 

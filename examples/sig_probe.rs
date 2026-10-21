@@ -33,7 +33,7 @@ fn main() {
         None
     });
     // 显式收口音频混音器（留到主线程 TLS 析构期 Drop cpal 流会崩）
-    starfish::pygame::mixer::quit();
+    starfish_pygame::mixer::quit();
     match err {
         Some(msg) => {
             println!("[sig_probe] FAIL: {msg}");
