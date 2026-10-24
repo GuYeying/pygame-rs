@@ -15,8 +15,8 @@ use std::cell::Cell;
         use rustpython_derive::{pymodule, pyclass, FromArgs};
         use rustpython_vm::types::Constructor;
         use rustpython_vm::builtins::PyType;
-        use rustpython_vm::{Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
-        use std::cell::Cell;
+        use rustpython_vm::{Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine, builtins::PyStrRef};
+        use std::cell::{Cell, RefCell};
         use std::sync::Arc;
         use starfish_audio::SoundData;
 
@@ -130,6 +130,208 @@ use std::cell::Cell;
             bridge::with_mixer(vm, |m| m.get_busy())
         }
 
+        /// set_reserved(n)：保留 0..n 通道（不参与 Sound.play 自动分配
+        /// ——专供 Channel(idx) 定点使用）
+        #[pyfunction]
+        fn set_reserved(n: usize) {
+            starfish_pygame::mixer::set_reserved(n)
+        }
+
+        /// num_channels() -> int：通道数（init 定格）
+        #[pyfunction]
+        fn num_channels() -> usize {
+            starfish_pygame::mixer::num_channels()
+        }
+
+        /// output_sample_rate() -> int：混音输出采样率（Hz）
+        #[pyfunction]
+        fn output_sample_rate() -> u32 {
+            starfish_pygame::mixer::output_sample_rate()
+        }
+
+        /// beep() -> Sound：内嵌提示音（CLOCK 权宜音——快速反馈用）
+        #[pyfunction]
+        fn beep(vm: &VirtualMachine) -> PyRef<PySound> {
+            let data = starfish_pygame::mixer::beep();
+            PySound {
+                data,
+                channel: std::cell::Cell::new(None),
+            }
+            .into_ref(&vm.ctx)
+        }
+
+        // ── Channel：定点通道（批次 49 parity；fade/特效挂载在此）──
+
+        /// 定点通道（idx 不透明 int——0..num_channels；set_reserved 配合）
+        #[derive(PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame.mixer", name = "Channel", unhashable = true)]
+        pub(crate) struct PyChannel {
+            pub(crate) inner: RefCell<starfish_pygame::mixer::Channel>,
+        }
+
+        impl std::fmt::Debug for PyChannel {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("Channel(<idx>)")
+            }
+        }
+
+        /// Channel(idx)：定点通道句柄
+        #[derive(FromArgs)]
+        pub(crate) struct ChannelArgs {
+            pub(crate) idx: usize,
+        }
+
+        impl Constructor for PyChannel {
+            type Args = ChannelArgs;
+
+            fn py_new(
+                _cls: &Py<PyType>,
+                args: Self::Args,
+                _vm: &VirtualMachine,
+            ) -> PyResult<Self> {
+                Ok(Self {
+                    inner: RefCell::new(starfish_pygame::mixer::Channel::new(args.idx)),
+                })
+            }
+        }
+
+        #[pyclass(with(Constructor))]
+        impl PyChannel {
+            /// play(sound, loops=0)：本通道定点播放
+            #[pymethod]
+            fn play(&self, sound: PyRef<PySound>, loops: Option<i32>, vm: &VirtualMachine) -> PyResult<()> {
+                self.inner
+                    .borrow()
+                    .play(&starfish_pygame::mixer::Sound::from_data(sound.data.clone()), loops.unwrap_or(0))
+                    .map_err(|e| vm.new_value_error(format!("音频错误: {e:?}")))
+            }
+
+            #[pymethod]
+            fn stop(&self) {
+                self.inner.borrow().stop()
+            }
+
+            #[pymethod]
+            fn pause(&self) {
+                self.inner.borrow().pause()
+            }
+
+            #[pymethod]
+            fn resume(&self) {
+                self.inner.borrow().resume()
+            }
+
+            /// set_volume(v)：本通道音量（0..1）
+            #[pymethod]
+            fn set_volume(&self, v: f64) {
+                self.inner.borrow().set_volume(v as f32)
+            }
+
+            /// fade_in(sound, ms, loops=0)：本通道淡入播放
+            #[pymethod]
+            fn fade_in(
+                &self,
+                sound: PyRef<PySound>,
+                ms: u32,
+                loops: Option<i32>,
+                vm: &VirtualMachine,
+            ) -> PyResult<()> {
+                self.inner
+                    .borrow()
+                    .fade_in(&starfish_pygame::mixer::Sound::from_data(sound.data.clone()), ms)
+                    .map_err(|e| vm.new_value_error(format!("音频错误: {e:?}")))
+            }
+
+            /// fade_out(ms)：本通道淡出
+            #[pymethod]
+            fn fade_out(&self, ms: u32) {
+                self.inner.borrow().fade_out(ms)
+            }
+
+            /// get_busy() -> bool：本通道播放中
+            #[pymethod]
+            fn get_busy(&self) -> bool {
+                self.inner.borrow().get_busy()
+            }
+
+            /// get_sound() -> Sound | None：本通道当前装载的声音
+            #[pymethod]
+            fn get_sound(&self, vm: &VirtualMachine) -> PyResult<Option<PyRef<PySound>>> {
+                Ok(self.inner.borrow().get_sound().map(|s| {
+                    PySound {
+                        data: s.data(),
+                        channel: std::cell::Cell::new(Some(self.inner.borrow().idx())),
+                    }
+                    .into_ref(&vm.ctx)
+                }))
+            }
+
+            /// add_effect(effect)：挂特效到本通道数据通路（Effect 句柄
+            /// 克隆共享参数态——挂载后 `effect.set(key, v)` 仍实时生效）
+            #[pymethod]
+            fn add_effect(&self, effect: PyRef<PyEffect>) {
+                self.inner.borrow().add_effect(effect.inner.borrow().clone())
+            }
+        }
+
+        // ── Effect：音频特效（字符串键控参数面；Gain/Echo/Distortion/
+        // LowPass 预设）──
+
+        /// 音频特效句柄（kind = "gain" | "echo" | "distortion" | "lowpass"）
+        #[derive(PyPayload)]
+        #[pyattr]
+        #[pyclass(module = "pygame.mixer", name = "Effect", unhashable = true)]
+        pub(crate) struct PyEffect {
+            pub(crate) inner: RefCell<starfish_pygame::effects::Effect>,
+        }
+
+        impl std::fmt::Debug for PyEffect {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("Effect(<preset>)")
+            }
+        }
+
+        #[derive(FromArgs)]
+        pub(crate) struct EffectArgs {
+            #[pyarg(any)]
+            pub(crate) kind: String,
+        }
+
+        impl Constructor for PyEffect {
+            type Args = EffectArgs;
+
+            fn py_new(
+                _cls: &Py<PyType>,
+                args: Self::Args,
+                vm: &VirtualMachine,
+            ) -> PyResult<Self> {
+                let effect = starfish_pygame::effects::Effect::new(
+                    &args.kind,
+                    starfish_pygame::mixer::output_sample_rate(),
+                )
+                .map_err(|e| vm.new_value_error(format!("特效构造失败: {e:?}")))?;
+                Ok(Self {
+                    inner: RefCell::new(effect),
+                })
+            }
+        }
+
+        #[pyclass(with(Constructor))]
+        impl PyEffect {
+            /// set(key, value)：实时调参（键随预设：gain="gain"；
+            /// echo="delay_ms"/"feedback"；distortion="drive"；
+            /// lowpass="cutoff"）
+            #[pymethod]
+            fn set(&self, key: PyStrRef, value: f64, vm: &VirtualMachine) -> PyResult<()> {
+                let k = key.to_str().ok_or_else(|| vm.new_type_error("键含非 UTF-8 字符"))?;
+                self.inner
+                    .borrow()
+                    .set(k, value as f32)
+                    .map_err(|e| vm.new_value_error(format!("{e:?}")))
+            }
+        }
+
         // ── pygame.mixer.music（流式 BGM；字节/文件双入口）──
         #[pymodule]
         mod music {
@@ -197,4 +399,4 @@ use std::cell::Cell;
     }
 
 
-pub(crate) use mixer::{module_def, PySound};
+pub(crate) use mixer::{module_def, PySound, PyChannel, PyEffect};

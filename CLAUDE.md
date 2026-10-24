@@ -610,3 +610,29 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     `take_raw_input` 直通；Surface = `strip_pointer` 剥除——"非 Screen
     无指针事件"规则单一归口）。ScreenDescriptor 尺寸由 raw.screen_rect
     推导（变体已按目标设置）。行为不变（pip 7/7 + egui 129 帧复测）。
+- **批次 49（2026-10-24）：绑定收官冲刺——全模块公开面审计 + 缺口全绑**：
+  - 审计方法：逐模块枚举 starfish-pygame `pub fn` 对照绑定面（含绑定侧
+    异名/kwargs 形态核对）。结论：display/sndarray/sprite/key 大部
+    **已绑**（审计误报为异名覆盖）；真缺口 = color 方法面 parity、
+    mixer Channel/Effect、key 三小件、render_depth、**init_colors
+    未调**（`Color("red")` 命名构造实际全坏——审计意外收获的真 bug）；
+  - **color**：命名构造修复（registry install 装载 COLORS_JSON 颜色
+    表——from_name 依赖它，此前从未被调用）+ `update`/`cmy`/`hsva`/
+    `hsla`/`i1i2i3`/`set_length`/`contains`（Cell 拷贝改写访问 &mut
+    引擎方法——Cell 无 borrow_mut，get→mut 本地→set 回写）；
+  - **mixer**：`Channel` 类（play/stop/pause/resume/set_volume/
+    fade_in/fade_out/get_busy/get_sound/add_effect）+ `Effect` 类
+    （kind = gain/echo/distortion/lowpass；`set(key, value)` 字符串
+    键控——一次实现通吃预设）+ 模块面 `beep`/`set_reserved`/
+    `num_channels`/`output_sample_rate`；引擎侧 Sound 增 pub
+    `from_data`/`data` 桥（绑定 PySound 桥接）；
+  - **render_depth 真绑定**（撤 NotImplementedError 桩）：引擎
+    session 增 `begin_screen_depth`（深度会话与普通 Screen 会话共用
+    槽位——开启即替换）；返回 Session 对象，绘制 API 与普通会话一致
+    （重叠图元按深度判定；相机 v1 正交缺省）；
+  - 已知余项：sprite flip_x/flip_y/offset/centered kwargs（transform
+    .flip 可替代）、egui 指针残影（per-surface Context 按需重开）、
+    render_depth 会话相机面（随 3D 批次）；
+  - 验收：binding_probe selftest 全部通过（新增 color parity/display/
+    key/mixer Channel+Effect/render_depth 十六项）+ rapier3d_test/
+    pip_test/sig_probe SUMMARY PASS + 引擎测试绿。

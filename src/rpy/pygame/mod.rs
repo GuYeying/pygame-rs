@@ -412,10 +412,15 @@ pub mod pygame {
             starfish_pygame::display::get_screen().size()
         }
 
-        /// 深度会话（v1.1：Surface 创建整合 depth_buffer 后启用，架构 §九）。
+        /// render_depth() -> Session：**深度会话**（绘制走深度测试管线，
+        /// 深度缓冲随 base 帧清屏清 1.0——3D 内容 / 2.5D 遮挡；绘制 API
+        /// 与普通会话一致，重叠图元按深度判定而非画家序；相机 v1 为
+        /// 正交缺省，会话面 `set_camera` 随 3D 批次开放）。槽位与普通
+        /// Screen 会话共用——开启即替换，`with` 块收口照常打包。
         #[pymethod]
-        fn render_depth(&self, vm: &VirtualMachine) -> PyResult<()> {
-            Err(vm.new_not_implemented_error("render_depth 随 Surface 批次（v1.1）落地"))
+        fn render_depth(&self, vm: &VirtualMachine) -> PyResult<PyRef<PyScreenSession>> {
+            starfish_pygame::render::session::begin_screen_depth();
+            Ok(PyScreenSession.into_ref(&vm.ctx))
         }
 
         // /// 全局屏填充（真身 bridge::sf_draw_fill——批次 A 签名）。
@@ -728,6 +733,63 @@ pub mod pygame {
         #[pymethod]
         fn correct_gamma(&self, gamma: f32, vm: &VirtualMachine) -> PyRef<Self> {
             Self(Cell::new(self.0.get().correct_gamma(gamma))).into_ref(&vm.ctx)
+        }
+        /// update(r, g, b, a)：原地更新四分量
+        #[pymethod]
+        fn update(&self, r: u8, g: u8, b: u8, a: u8) {
+            let mut c = self.0.get();
+            c.update(r, g, b, a);
+            self.0.set(c);
+        }
+
+        /// cmy -> (c, m, y)：青/品红/黄（0..1 减色三元组）
+        #[pygetset]
+        fn cmy(&self) -> (f32, f32, f32) {
+            let mut c = self.0.get();
+            let r = c.cmy();
+            self.0.set(c);
+            r
+        }
+
+        /// hsva -> (h, s, v, a)：色相/饱和/明度（h 0..360，余 0..1）
+        #[pygetset]
+        fn hsva(&self) -> (f32, f32, f32, f32) {
+            let mut c = self.0.get();
+            let r = c.hsva();
+            self.0.set(c);
+            r
+        }
+
+        /// hsla -> (h, s, l, a)：色相/饱和/亮度
+        #[pygetset]
+        fn hsla(&self) -> (f32, f32, f32, f32) {
+            let mut c = self.0.get();
+            let r = c.hsla();
+            self.0.set(c);
+            r
+        }
+
+        /// i1i2i3 -> (i1, i2, i3)：Ohta 色空间分解
+        #[pygetset]
+        fn i1i2i3(&self) -> (f32, f32, f32) {
+            let mut c = self.0.get();
+            let r = c.i1i2i3();
+            self.0.set(c);
+            r
+        }
+
+        /// set_length(len)：3 = RGB / 4 = RGBA（元组化长度语义）
+        #[pymethod]
+        fn set_length(&self, len: usize) {
+            let mut c = self.0.get();
+            c.set_length(len);
+            self.0.set(c);
+        }
+
+        /// contains(value)：分量包含判定（len 语义辅助）
+        #[pymethod]
+        fn contains(&self, value: u8) -> bool {
+            self.0.get().contains(value)
         }
     }
 

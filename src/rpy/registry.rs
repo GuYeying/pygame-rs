@@ -29,6 +29,9 @@ use crate::rpy::pygame_physics;
 
 /// 多阶段 init 后注入 sys.modules（宿主壳统一入口）。
 pub fn install(vm: &VirtualMachine) {
+    // 颜色表装载（`Color("name")` 命名构造依赖；双 init 错误静默——
+    // install 本就单次，防御性容忍）
+    let _ = starfish_pygame::color::init_colors(starfish_pygame::COLORS_JSON, true);
     if let Err(msg) = try_install(vm) {
         panic!("绑定面模块注入失败: {msg}");
     }

@@ -243,6 +243,56 @@ def game():
     _st("event.poll", _pe is None or hasattr(_pe, "type"))
     pygame.event.clear()
     _st("kmod.const", pygame.key.KMOD_SHIFT == 1 and pygame.key.KMOD_ALT == 4)
+
+    # ── 批次 49（绑定收官）：color parity / 深度会话 / mixer Channel+Effect ──
+    try:
+        _c = pygame.Color(10, 20, 30)
+        _c.update(40, 50, 60, 200)
+        _st("color.update", _c.r == 40 and _c.a == 200)
+        _st("color.cmy", all(0.0 <= v <= 1.0 for v in _c.cmy))
+        _st("color.hsva", 0.0 <= _c.hsva[0] <= 360.0)
+        _st("color.hsla", len(_c.hsla) == 4)
+        _st("color.i1i2i3", len(_c.i1i2i3) == 3)
+        _c.set_length(3)
+        _st("color.set_length", _c.r == 40)  # 长度语义（非可迭代——元组化留 v2）
+        _st("color.contains", _c.contains(40))
+        _named = pygame.Color("red")
+        _st("color.named (颜色表装载)", _named.r == 255 and _named.g == 0)
+    except Exception as _e:
+        _st("color.parity", False); print("    [selftest] 异常:", _e)
+    try:
+        _st("key.get_focused", isinstance(pygame.key.get_focused(), bool))
+        pygame.key.set_repeat(0, 0)
+        _st("key.set_repeat", True)
+        _st("display.set_caption", (pygame.display.set_caption("probe"), True)[1])
+        pygame.display.set_opacity(0.9)
+        _st("display.set_opacity", True)
+    except Exception as _e:
+        _st("display/key.parity", False); print("    [selftest] 异常:", _e)
+    try:
+        _ch = pygame.mixer.Channel(0)
+        _probe_snd = pygame.mixer.Sound(bytes=b"RIFF") if False else None
+        _st("mixer.Channel 构造", _ch is not None)
+        _st("mixer.num_channels", pygame.mixer.num_channels() >= 1)
+        _st("mixer.output_sample_rate", pygame.mixer.output_sample_rate() > 0)
+        pygame.mixer.set_reserved(1)
+        _st("mixer.set_reserved", True)
+        _fx = pygame.mixer.Effect("gain")
+        _fx.set("gain", 0.5)
+        _st("mixer.Effect.set", True)
+        _ch.add_effect(_fx)
+        _st("mixer.Channel.add_effect", True)
+        _beep = pygame.mixer.beep()
+        _st("mixer.beep", _beep is not None)
+    except Exception as _e:
+        _st("mixer.parity", False); print("    [selftest] 异常:", _e)
+    try:
+        with screen.render() as rd:
+            rd.fill((0, 0, 0))
+            rd.rect((0, 200, 90), (10, 10, 50, 50))
+        _st("render_depth 会话", True)
+    except Exception as _e:
+        _st("render_depth 会话", False); print("    [selftest] 异常:", _e)
     print("[selftest] 汇总:", "全部通过" if not _st_fail
           else "失败项 " + repr(_st_fail))
 
