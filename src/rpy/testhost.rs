@@ -142,7 +142,7 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
     interp.enter(|vm| {
         let run = || -> Result<(), String> {
             let scope = vm.new_scope_with_builtins();
-            rpy::install_pygame(vm);
+            rpy::install_modules(vm);
             dlog(tag, "pygame 原生模块已注入");
             let code = vm
                 .compile(

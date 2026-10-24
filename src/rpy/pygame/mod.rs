@@ -1,4 +1,4 @@
-//! pygame 父模块壳（2026-10-24 整理批次）：承载顶层类型（Surface/
+
 //! SurfaceSession/Screen/Session/Color——#[pyclass] struct+impl
 //! 必须同宿 pymodule）+ init/quit 占位 + targets MRT 会话入口；子模块
 //! 在各 mods/*.rs，由 registry 按依赖序挂载（event 先于 key）。
@@ -9,7 +9,7 @@ use rustpython_derive::pymodule;
 #[pymodule(name = "pygame")]
 pub mod pygame {
     use std::cell::Cell;
-    use crate::rpy::mods::font::font;
+    use crate::rpy::pygame::font::font;
     use crate::rpy::{bridge, args};
     use starfish_pygame::render::{DrawTarget, Surface as SfSurface};
     use rustpython_derive::{pyclass, FromArgs};
@@ -23,7 +23,7 @@ pub mod pygame {
     };
     use starfish_pygame::color::Color as EngineColor;
     use crate::rpy::args::{SfColor, SfPoint, SfRect};
-    use crate::rpy::mods::event::PyKey;
+    use crate::rpy::pygame::event::PyKey;
     pub(crate) const DEFAULT_FONT: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/resources/fonts/Antonio-Regular.ttf"
@@ -338,6 +338,53 @@ pub mod pygame {
             DrawTarget::blit(&*self.surface, &rendered, (dest.0, dest.1));
             Ok(())
         }
+
+        // ── 客人库叠加通道（批次 48：画中画 / 游戏内面板）──────────
+        // 排程到本面 flush 收口（__exit__ 时 batch pack 之后统一执行）；
+        // 3D 面须 depth_buffer=True 创建（深度通道硬契约）。
+
+        /// draw_ui(panel)（feature "gui"）：egui 面板画进本面。
+        #[cfg(feature = "gui")]
+        #[pymethod]
+        fn draw_ui(&self, panel: PyObjectRef, vm: &VirtualMachine) -> PyResult<()> {
+            crate::rpy::pygame_gui::runtime::draw_ui_on_surface(vm, panel, &self.surface)
+        }
+
+        /// draw_debug(renderer, sink)（feature "physics2d"）：2D 调试线
+        /// 画进本面；renderer/sink = pygame_physics 对象。
+        #[cfg(feature = "physics2d")]
+        #[pymethod]
+        fn draw_debug(
+            &self,
+            renderer: PyRef<crate::rpy::pygame_physics::PyDebugLinesRenderer>,
+            sink: PyRef<crate::rpy::pygame_physics::PyLineSink>,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            crate::rpy::pygame_physics::runtime_2d::draw_debug_on_surface(
+                renderer,
+                sink,
+                &self.surface,
+                vm,
+            )
+        }
+
+        /// draw_debug_3d(renderer, sink)（feature "physics3d"）：3D 调试线
+        /// 画进本面——**本面须 depth_buffer=True 创建**。
+        #[cfg(feature = "physics3d")]
+        #[pymethod]
+        fn draw_debug_3d(
+            &self,
+            renderer: PyRef<crate::rpy::pygame_physics::PyDebugLinesRenderer3D>,
+            sink: PyRef<crate::rpy::pygame_physics::PyLineSink3D>,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            crate::rpy::pygame_physics::runtime_3d::draw_debug_3d_on_surface(
+                renderer,
+                sink,
+                &self.surface,
+                vm,
+            )
+        }
     }
     // init/quit 占位函数在本 pymodule 壳尾部（#[pyfunction] 需 pymodule
     // 宏承载）。
@@ -403,27 +450,41 @@ pub mod pygame {
         }
 
         /// draw_ui(panel)（feature "gui"）：egui 面板构建 + 会话排程——
-        /// "画到哪个目标"由会话对象表达。panel = pygame.egui.UiBase 子类
+        /// "画到哪个目标"由会话对象表达。panel = pygame_gui.UiBase 子类
         /// 实例（OOP 门面，须实现 draw(self, ui)）；每帧一次；落屏在
         /// flip 的叠加阶段（恒在游戏内容之上）。
         #[cfg(feature = "gui")]
         #[pymethod]
         fn draw_ui(&self, panel: PyObjectRef, vm: &VirtualMachine) -> PyResult<()> {
-            crate::rpy::pyegui::draw_ui(vm, panel)
+            crate::rpy::pygame_gui::runtime::draw_ui(vm, panel)
         }
 
         /// draw_debug(renderer, sink)（feature "physics2d"）：rapier 调试
         /// 线会话排程（与 draw_ui 同一渲染行为——会话内调用、恒在游戏
-        /// 内容之上）；renderer/sink = pygame.rapier 对象。
+        /// 内容之上）；renderer/sink = pygame_physics 对象。
         #[cfg(feature = "physics2d")]
         #[pymethod]
         fn draw_debug(
             &self,
-            renderer: PyRef<crate::rpy::mods::rapier::PyDebugLinesRenderer>,
-            sink: PyRef<crate::rpy::mods::rapier::PyLineSink>,
+            renderer: PyRef<crate::rpy::pygame_physics::PyDebugLinesRenderer>,
+            sink: PyRef<crate::rpy::pygame_physics::PyLineSink>,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            crate::rpy::pyrapier::draw_debug(renderer, sink, vm)
+            crate::rpy::pygame_physics::runtime_2d::draw_debug(renderer, sink, vm)
+        }
+
+        /// draw_debug_3d(renderer, sink)（feature "physics3d"）：3D 调试线
+        /// 会话排程——look-at 透视相机 + **深度通道**（3D 线管线硬契约）；
+        /// renderer/sink = pygame_physics 的 3D 类对象（3D 后缀）。
+        #[cfg(feature = "physics3d")]
+        #[pymethod]
+        fn draw_debug_3d(
+            &self,
+            renderer: PyRef<crate::rpy::pygame_physics::PyDebugLinesRenderer3D>,
+            sink: PyRef<crate::rpy::pygame_physics::PyLineSink3D>,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            crate::rpy::pygame_physics::runtime_3d::draw_debug_3d(renderer, sink, vm)
         }
 
         #[pymethod]
@@ -952,3 +1013,31 @@ pub mod pygame {
         }
     }
 }
+
+//
+// 子模块挂载序定约（registry）：**event 先于 key**——key 的 K_* 钩子
+// 取 PyKey 的 static type（event 的 `__init_attributes` 里创建）。
+
+
+pub(crate) mod dialog;
+pub(crate) mod display;
+pub(crate) mod event;
+pub(crate) mod font;
+pub(crate) mod gamepad;
+pub(crate) mod gfxdraw;
+pub(crate) mod image;
+pub(crate) mod io;
+pub(crate) mod key;
+pub(crate) mod mask;
+pub(crate) mod math;
+pub(crate) mod mixer;
+pub(crate) mod mouse;
+pub(crate) mod net;
+pub(crate) mod permission;
+pub(crate) mod sndarray;
+pub(crate) mod sprite;
+pub(crate) mod time;
+pub(crate) mod touch;
+pub(crate) mod transform;
+pub(crate) mod version;
+pub(crate) mod video;

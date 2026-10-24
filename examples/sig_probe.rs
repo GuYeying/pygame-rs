@@ -13,7 +13,7 @@ fn main() {
     let interp = rpy::new_interpreter();
     let err = interp.enter(|vm| -> Option<String> {
         let scope = vm.new_scope_with_builtins();
-        rpy::install_pygame(vm); // 原生 pygame 模块注入（enter 内，脚本前）
+        rpy::install_modules(vm); // 原生 pygame 模块注入（enter 内，脚本前）
         let code = vm
             .compile(
                 include_str!("sig_probe.py"),

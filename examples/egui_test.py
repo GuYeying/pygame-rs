@@ -1,4 +1,4 @@
-# pygame.egui 对接专项测试（渲染对接 v1，2026-10-24 会话形态终版）
+# pygame_gui 对接专项测试（原 pygame.egui，2026-10-24 升格）（渲染对接 v1，2026-10-24 会话形态终版）
 # 控制台 [egui-test] 逐项断言 + HUD 样张上屏（视觉验收：egui 面板画在
 # 游戏画面之上、中文正常渲染）
 # 接口形态（本批定约）：
@@ -9,7 +9,7 @@
 #   ③ 嵌套布局 with 语法——`with ui.horizontal():`；
 #   ④ 落屏时机 = flip 的叠加阶段（恒在游戏内容之上，结构保证）。
 import pygame
-import pygame.egui as egui
+import pygame_gui as egui
 
 
 class HUD(egui.UiBase):
@@ -22,11 +22,15 @@ class HUD(egui.UiBase):
         self.checked = False
         self.gravity = 9.81
         self.last_slider = None
+        self.name = "玩家"
+        self.mode = 1                    # radio/combo 共享选中序号
+        self.speed = 1.0
+        self.sel = False
 
     def draw(self, ui):
         self.frames += 1
         ui.heading("egui-starfish-we HUD 测试")
-        ui.label("pygame.egui OOP 门面 · 中文渲染验收")
+        ui.label("pygame_gui OOP 门面 · 中文渲染验收")
         if ui.button("点我 (button)"):
             self.clicks += 1
         self.checked = ui.checkbox("复选框 (checkbox)", self.checked)
@@ -34,10 +38,19 @@ class HUD(egui.UiBase):
         self.gravity = g
         self.last_slider = g
         ui.separator()
+        # ── 词汇扩充 v2（批次 47）──
+        self.name = ui.text_edit(self.name)
+        self.mode = ui.radio_group(("Easy", "Normal", "Hard"), self.mode)
+        self.sel = ui.selectable("可选行 (selectable)", self.sel)
+        ui.progress_bar(min(1.0, self.frames / 600))
+        self.speed = ui.drag_f32("速度", self.speed, 0.05, 0.0, 5.0)
+        self.mode = ui.combo_box("难度", ("Easy", "Normal", "Hard"), self.mode)
+        ui.separator()
         with ui.horizontal():
             ui.label(f"帧 {self.frames}")
             ui.label(f"点击 {self.clicks}")
             ui.label(f"g={g:.2f}")
+            ui.label(f"速度={self.speed:.2f}")
         ui.horizontal(lambda inner: inner.label("回调形态同行"))
         ui.separator()
         # 经属性捕获的游戏对象参与 UI
@@ -101,7 +114,7 @@ def game():
     # ── 面板实例（属性捕获游戏状态）──
     hud = HUD(game_state)
 
-    label = cjk.render("pygame.egui 叠加通道：egui 面板应在游戏画面之上（左上角）",
+    label = cjk.render("pygame_gui 叠加通道：egui 面板应在游戏画面之上（左上角）",
                        True, (200, 200, 200))
 
     # ── 帧循环（事件逐条喂 egui → t.draw_ui 会话内构建+排程 → flip 落屏）──

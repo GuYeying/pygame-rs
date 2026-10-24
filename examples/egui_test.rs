@@ -1,4 +1,4 @@
-//! pygame.egui 对接专项测试（渲染对接 v1，2026-10-24）。
+//! pygame_gui 对接专项测试（渲染对接 v1，2026-10-24）。
 //!
 //! 覆盖：init 幂等 / frame(callback) 即时模式 UI / 叠加通道 draw /
 //! wants_pointer 查询 / shutdown。[egui-test] 行逐项断言 + HUD 样张上屏

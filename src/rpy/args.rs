@@ -136,6 +136,26 @@ impl TryFromObject for SfFPoint {
     }
 }
 
+/// 三维向量（f32 宽收——pygame_physics 3D 类面的平移/速度/重力参数）
+#[derive(Debug, Clone, Copy)]
+pub struct SfFPoint3(pub f32, pub f32, pub f32);
+
+impl TryFromObject for SfFPoint3 {
+    fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
+        use rustpython_vm::function::ArgIntoFloat;
+        let items: Vec<f64> = vm.extract_elements_with(&obj, |o| {
+            ArgIntoFloat::try_from_object(vm, o).map(|v| v.into_float())
+        })?;
+        if items.len() != 3 {
+            return Err(vm.new_type_error(format!(
+                "三维向量 (x, y, z) 长度必须为 3，实际 {} 个分量",
+                items.len()
+            )));
+        }
+        Ok(Self(items[0] as f32, items[1] as f32, items[2] as f32))
+    }
+}
+
 /// f32 点列（quad 角点/uv 固定 4 组；vertices/geometry 顶点列任意长度
 /// ——长度在会话方法层校验）
 #[derive(Debug, Clone)]
@@ -167,7 +187,7 @@ pub(crate) struct GeometryArgs {
     pub(crate) color: Option<SfColor>,
 }
 
-// ── pygame.egui 收参（批次 42）──────────────────────────────────
+// ── pygame_gui 收参（批次 42；原 pygame.egui，2026-10-24 升格独立模块）──────────────────────────────────
 
 /// ui.horizontal(callback=None)：callback 缺省 None（无参 = with 区域
 /// 形态，返回 UiRegion；传回调 = egui 原生闭包形态）

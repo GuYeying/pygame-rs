@@ -118,6 +118,26 @@ crate-type = ["cdylib"]
 required-features = ["physics2d"]
 
 [[example]]
+name = "rapier3d_test"
+required-features = ["physics3d"]
+
+[[example]]
+name = "rapier3d_test_android"
+path = "examples/rapier3d_test.rs"
+crate-type = ["cdylib"]
+required-features = ["physics3d"]
+
+[[example]]
+name = "pip_test"
+required-features = ["physics3d"]
+
+[[example]]
+name = "pip_test_android"
+path = "examples/pip_test.rs"
+crate-type = ["cdylib"]
+required-features = ["physics3d"]
+
+[[example]]
 name = "egui_test"
 required-features = ["gui"]
 

@@ -1,4 +1,7 @@
-//! pygame.egui 绑定（2026-10-24 自 native_pygame.rs 拆分；body 原样搬运）。
+//! pygame_gui —— 独立顶层 Python 模块（2026-10-24 架构抽象：自
+//! `pygame.egui` 平级升格；import pygame_gui 直达，不再挂 pygame 子模块）。
+//! `runtime.rs` = 会话实现本体（EguiRuntime + draw_ui 三段）；本文件 =
+//! #[pymodule] 声明 + 类型 + UiBase 注入。文件夹形态 = 新模块效仿模板。
 #![allow(unused_imports)]
 use rustpython_derive::{pymodule, pyclass, FromArgs};
 use crate::rpy::{bridge, args};
@@ -10,15 +13,19 @@ use rustpython_vm::{
     builtins::{PyModule, PyStr, PyStrRef, PyType},
 };
 use std::cell::Cell;
-#[pymodule]
-    pub mod egui {
+
+pub(crate) mod runtime;
+
+#[pymodule(name = "pygame_gui")]
+    pub mod pygame_gui {
         use egui_starfish_we::egui;
         use rustpython_derive::pyclass;
         use rustpython_vm::{
             PyObjectRef, PyPayload, PyRef, PyResult, Py, VirtualMachine, builtins::PyModule,
+
         };
 
-        use super::super::event::event::PyEvent;
+        use crate::rpy::pygame::event::PyEvent;
 
         /// Ui 对象（frame 回调注入；no_attr 自由类型——方法面在 pyegui）
         #[derive(PyPayload)]
@@ -50,7 +57,7 @@ use std::cell::Cell;
         /// **不自动捕获事件**——需要输入显式 `egui.capture()`。
         #[pyfunction]
         fn init(vm: &VirtualMachine) -> PyResult<()> {
-            crate::rpy::pyegui::init(vm)
+            crate::rpy::pygame_gui::runtime::init(vm)
         }
 
         /// UiBase 基类源码（**Python 层定义**——RP 子类化零障碍、
@@ -96,7 +103,7 @@ class UiBase:
         /// KMOD 位 → 完整修饰键）。
         #[pyfunction]
         fn event(e: PyRef<PyEvent>, vm: &VirtualMachine) -> PyResult<()> {
-            crate::rpy::pyegui::event(&e, vm)
+            crate::rpy::pygame_gui::runtime::event(&e, vm)
         }
         // 注：frame/draw 已合并为会话方法 `t.draw_ui(panel)`（见
         // PyScreenSession）——"画到哪个目标"由会话对象表达。
@@ -104,28 +111,33 @@ class UiBase:
         /// wants_pointer() -> bool：egui 想要指针输入（游戏让位判断）
         #[pyfunction]
         fn wants_pointer(_vm: &VirtualMachine) -> bool {
-            crate::rpy::pyegui::wants_pointer()
+            crate::rpy::pygame_gui::runtime::wants_pointer()
         }
 
         /// wants_keyboard() -> bool：egui 想要键盘输入
         #[pyfunction]
         fn wants_keyboard(_vm: &VirtualMachine) -> bool {
-            crate::rpy::pyegui::wants_keyboard()
+            crate::rpy::pygame_gui::runtime::wants_keyboard()
         }
 
         /// shutdown()：撤事件监听 + 卸运行时（幂等）
         #[pyfunction]
         fn shutdown(_vm: &VirtualMachine) {
-            crate::rpy::pyegui::shutdown()
+            crate::rpy::pygame_gui::runtime::shutdown()
         }
+
+        // 定约：egui 的**指针交互归 Screen**（窗口指针直通）——多 surface
+        // 的 draw_ui 是纯展示（游戏内面板/画中画），事件不做逐 surface
+        // 路由（2026-10-24 注入式方案评估后回退：egui 的原生多视口是
+        // OS 窗口模型，离屏纹理不构成原生视口，"自动分发"无原生挂点）。
     }
 
     // ── rapier：rapier-starfish-debug 原生风格绑定面（2D v1）──────
     // 类型/方法名与 rapier 0.36 词汇一致（不 pygame 化）；实现本体在
-    // crate::rpy::pyrapier（帧序/坐标契约/构造 kwargs 定约见其文件头）。
+    // pygame_physics::runtime（帧序/坐标契约/构造 kwargs 定约见其文件头）。
     // feature "physics2d" 门控（3D = physics3d + pygame.rapier3d，后续批次）
 
 // ── 文件级 re-export（外部引用归位：pyegui/pyrapier 引用短路一层）──
-pub(crate) use egui::{PyUi, PyUiRegion};
+pub(crate) use pygame_gui::{PyUi, PyUiRegion};
 #[cfg(feature = "gui")]
-pub(crate) use egui::module_def;
+pub(crate) use pygame_gui::module_def;

@@ -30,17 +30,18 @@ use rapier_starfish_debug::dim2::debug::render::DebugLinesRenderer as SfDebugLin
 use rapier_starfish_debug::dim2::debug::{collect as sf_collect, DebugDraw as SfDebugDraw,
     LineSink as SfLineSink};
 use rapier_starfish_debug::dim2::prelude::{
-    ColliderBuilder as SfColliderBuilder, ColliderHandle, DebugRenderMode,
+    ChannelEventCollector, ColliderBuilder as SfColliderBuilder, ColliderHandle,
+    CollisionEvent, DebugRenderMode, QueryFilter, Ray as SfRay, ActiveEvents as SfActiveEvents,
     RigidBodyBuilder as SfRigidBodyBuilder, RigidBodyHandle,
 };
 use rapier_starfish_debug::dim2::world::PhysicsWorld as SfPhysicsWorld;
 use rustpython_derive::{FromArgs, pyclass};
 use rustpython_vm::function::ArgIntoFloat;
 use rustpython_vm::types::Constructor;
-use rustpython_vm::{Py, PyRef, PyResult, VirtualMachine, builtins::PyType};
+use rustpython_vm::{PyObjectRef, Py, PyRef, PyResult, VirtualMachine, builtins::PyType};
 
 use crate::rpy::args::SfFPoint;
-use crate::rpy::mods::rapier::{
+use super::{
     PyColliderBuilder, PyDebugDraw, PyDebugLinesRenderer, PyLineSink, PyPhysicsWorld,
     PyRigidBodyBuilder,
 };
@@ -59,6 +60,10 @@ fn unpack_body(v: u64) -> RigidBodyHandle {
 fn pack_collider(h: ColliderHandle) -> u64 {
     let (index, generation) = h.into_raw_parts();
     ((generation as u64) << 32) | index as u64
+}
+
+fn unpack_collider(v: u64) -> ColliderHandle {
+    ColliderHandle::from_raw_parts(v as u32, (v >> 32) as u32)
 }
 
 // ── 收参结构体（构造 kwargs）────────────────────────────────────
@@ -87,8 +92,16 @@ impl Constructor for PyPhysicsWorld {
         if let Some(dt) = args.dt {
             world.set_dt(dt.into_float() as f32);
         }
+        // 碰撞事件通道（step_frame 恒经 collector 步进——触发力/撕裂事件
+        // 的 sender 无接收端即静默丢弃）
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (ftx, _frx) = std::sync::mpsc::channel();
+        let (_ttx, _trx) = std::sync::mpsc::channel();
+        let collector = ChannelEventCollector::new(tx, ftx, _ttx);
         Ok(Self {
             inner: Rc::new(RefCell::new(world)),
+            events_rx: RefCell::new(rx),
+            collector: RefCell::new(collector),
         })
     }
 }
@@ -174,6 +187,10 @@ pub(crate) struct ColliderBuilderArgs {
     /// 传感器（只碰不撞，缺省 false）
     #[pyarg(any, optional)]
     pub(crate) sensor: Option<bool>,
+    /// 产生碰撞事件（drain_events 只报开启者——触发器/碰撞检测入口，
+    /// 缺省 false 省开销）
+    #[pyarg(any, optional)]
+    pub(crate) events: Option<bool>,
 }
 
 impl Constructor for PyColliderBuilder {
@@ -217,6 +234,9 @@ impl Constructor for PyColliderBuilder {
         }
         if args.sensor.unwrap_or(false) {
             c = c.sensor(true);
+        }
+        if args.events.unwrap_or(false) {
+            c = c.active_events(SfActiveEvents::COLLISION_EVENTS);
         }
         Ok(Self {
             builder: RefCell::new(Some(c)),
@@ -294,7 +314,7 @@ impl Constructor for PyDebugLinesRenderer {
     ) -> PyResult<Self> {
         Ok(Self {
             ppm: Cell::new(args.ppm.map(|p| p.into_float() as f32).unwrap_or(50.0)),
-            state: RefCell::new(None),
+            states: RefCell::new(Vec::new()),
         })
     }
 }
@@ -322,7 +342,9 @@ impl PyPhysicsWorld {
     /// 上限节流防死亡螺旋）
     #[pymethod]
     fn step_frame(&self, real_dt: ArgIntoFloat) -> u32 {
-        self.inner.borrow_mut().step_frame(real_dt.into_float() as f32)
+        self.inner
+            .borrow_mut()
+            .step_frame_with_events(real_dt.into_float() as f32, &*self.collector.borrow())
     }
 
     /// step()：固定步长积分一次
@@ -415,6 +437,156 @@ impl PyPhysicsWorld {
             .ok_or_else(|| vm.new_value_error("无效的 body handle"))?;
         Ok(body.is_sleeping())
     }
+
+    // ── 写入面（2D v2：游戏操控 / 触发器 / 查询）──────────────────
+
+    /// set_translation(body_handle, (x, y))：瞬移（自动唤醒）
+    #[pymethod]
+    fn set_translation(&self, body_handle: u64, pos: SfFPoint, vm: &VirtualMachine) -> PyResult<()> {
+        let mut w = self.inner.borrow_mut();
+        let body = w
+            .get()
+            .bodies
+            .get_mut(unpack_body(body_handle))
+            .ok_or_else(|| vm.new_value_error("无效的 body handle"))?;
+        body.set_translation([pos.0, pos.1].into(), true);
+        Ok(())
+    }
+
+    /// set_rotation(body_handle, angle)：设姿态（弧度；自动唤醒）
+    #[pymethod]
+    fn set_rotation(&self, body_handle: u64, angle: ArgIntoFloat, vm: &VirtualMachine) -> PyResult<()> {
+        let mut w = self.inner.borrow_mut();
+        let body = w
+            .get()
+            .bodies
+            .get_mut(unpack_body(body_handle))
+            .ok_or_else(|| vm.new_value_error("无效的 body handle"))?;
+        body.set_rotation(
+            rapier_starfish_debug::dim2::prelude::Rotation::new(angle.into_float() as f32),
+            true,
+        );
+        Ok(())
+    }
+
+    /// set_linvel(body_handle, (vx, vy))：设线速度（自动唤醒）
+    #[pymethod]
+    fn set_linvel(&self, body_handle: u64, v: SfFPoint, vm: &VirtualMachine) -> PyResult<()> {
+        let mut w = self.inner.borrow_mut();
+        let body = w
+            .get()
+            .bodies
+            .get_mut(unpack_body(body_handle))
+            .ok_or_else(|| vm.new_value_error("无效的 body handle"))?;
+        body.set_linvel([v.0, v.1].into(), true);
+        Ok(())
+    }
+
+    /// set_angvel(body_handle, w)：设角速度（自动唤醒）
+    #[pymethod]
+    fn set_angvel(&self, body_handle: u64, w: ArgIntoFloat, vm: &VirtualMachine) -> PyResult<()> {
+        let mut world = self.inner.borrow_mut();
+        let body = world
+            .get()
+            .bodies
+            .get_mut(unpack_body(body_handle))
+            .ok_or_else(|| vm.new_value_error("无效的 body handle"))?;
+        body.set_angvel(w.into_float() as f32, true);
+        Ok(())
+    }
+
+    /// apply_impulse(body_handle, (ix, iy))：施加冲量（自动唤醒）
+    #[pymethod]
+    fn apply_impulse(&self, body_handle: u64, impulse: SfFPoint, vm: &VirtualMachine) -> PyResult<()> {
+        let mut w = self.inner.borrow_mut();
+        let body = w
+            .get()
+            .bodies
+            .get_mut(unpack_body(body_handle))
+            .ok_or_else(|| vm.new_value_error("无效的 body handle"))?;
+        body.apply_impulse([impulse.0, impulse.1].into(), true);
+        Ok(())
+    }
+
+    /// wake_up(body_handle)：唤醒休眠体
+    #[pymethod]
+    fn wake_up(&self, body_handle: u64, vm: &VirtualMachine) -> PyResult<()> {
+        let mut w = self.inner.borrow_mut();
+        w.get().wake_up(unpack_body(body_handle), false);
+        Ok(())
+    }
+
+    /// set_gravity((gx, gy))：改重力（下一帧生效）
+    #[pymethod]
+    fn set_gravity(&self, g: SfFPoint) {
+        self.inner.borrow_mut().get().gravity = [g.0, g.1].into();
+    }
+
+    /// remove_body(body_handle) -> bool：移除刚体（连带其全部碰撞体；
+    /// 返回是否存在并已移除）
+    #[pymethod]
+    fn remove_body(&self, body_handle: u64, vm: &VirtualMachine) -> PyResult<bool> {
+        let mut w = self.inner.borrow_mut();
+        Ok(w.get()
+            .remove_body_with_colliders(unpack_body(body_handle), true)
+            .is_some())
+    }
+
+    /// drain_events() -> [(kind, collider_handle1, collider_handle2), ...]：
+    /// 排空自上帧以来的碰撞事件（kind = "started" | "stopped"；仅
+    /// `ColliderBuilder(events=True)` 的碰撞体产生事件——传感器触发器同
+    /// 此通道）。每帧调用一次，不清也不丢（通道缓冲按步累积）。
+    #[pymethod]
+    fn drain_events(&self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        let mut out: Vec<PyObjectRef> = Vec::new();
+        loop {
+            let ev = match self.events_rx.borrow_mut().try_recv() {
+                Ok(ev) => ev,
+                Err(_) => break,
+            };
+            let (kind, h1, h2) = match ev {
+                CollisionEvent::Started(h1, h2, _) => ("started", h1, h2),
+                CollisionEvent::Stopped(h1, h2, _) => ("stopped", h1, h2),
+                _ => continue,
+            };
+            let s: PyObjectRef = vm.ctx.new_str(kind).into();
+            let a: PyObjectRef = vm.ctx.new_int(pack_collider(h1) as i64).into();
+            let b: PyObjectRef = vm.ctx.new_int(pack_collider(h2) as i64).into();
+            let tup: PyObjectRef = vm.new_tuple((s, a, b)).into();
+            out.push(tup);
+        }
+        Ok(vm.ctx.new_list(out).into())
+    }
+
+    /// cast_ray(origin, dir, max_toi) -> None | (collider_handle, 距离)：
+    /// 射线查询（dir 非单位向量按其模长定射线长；max_toi 为 dir 模长的
+    /// 倍数上限，None = 缺省 100.0——RP 方法参数无缺省，Python 侧显式传
+    /// None）。⚠️ 时序契约：insert 后**须至少 step 一次**方可查询
+    /// （broad_phase 时序——实测 insert 后立即查询返回 None）。
+    #[pymethod]
+    fn cast_ray(
+        &self,
+        origin: SfFPoint,
+        dir: SfFPoint,
+        max_toi: Option<ArgIntoFloat>,
+        vm: &VirtualMachine,
+    ) -> PyResult<Option<(u64, f64)>> {
+        let w = self.inner.borrow();
+        let ray = SfRay::new([origin.0, origin.1].into(), [dir.0, dir.1].into());
+        let max = max_toi.map(|m| m.into_float() as f32).unwrap_or(100.0);
+        Ok(w.get_ref()
+            .cast_ray(&ray, max, true, QueryFilter::default())
+            .map(|(ch, toi)| (pack_collider(ch), toi as f64)))
+    }
+
+    /// intersection_pair(h1, h2) -> bool：两碰撞体当前是否相交
+    #[pymethod]
+    fn intersection_pair(&self, h1: u64, h2: u64, vm: &VirtualMachine) -> PyResult<bool> {
+        let w = self.inner.borrow();
+        Ok(w.get_ref()
+            .intersection_pair(unpack_collider(h1), unpack_collider(h2))
+            .is_some())
+    }
 }
 
 #[pyclass(with(Constructor))]
@@ -466,11 +638,12 @@ impl Constructor for PyLineSink {
 
 #[pyclass(with(Constructor))]
 impl PyDebugLinesRenderer {
-    /// set_camera(ppm)：ortho 缩放（像素/米；下次 draw_debug 生效）
+    /// set_camera(ppm)：ortho 缩放（像素/米；下次 draw_debug 生效——
+    /// 全部样本数槽置脏）
     #[pymethod]
     fn set_camera(&self, ppm: ArgIntoFloat) {
         self.ppm.set(ppm.into_float() as f32);
-        if let Some(st) = self.state.borrow_mut().as_mut() {
+        for (_, st) in self.states.borrow_mut().iter_mut() {
             st.viewport = (0, 0); // 置脏 → 下次 draw_debug 重设相机
         }
     }
@@ -493,11 +666,8 @@ pub(crate) fn collect(
 }
 
 /// draw_debug(renderer, sink)（`t.draw_debug(renderer, sink)` 的本体，
-/// t = `with screen.render()` 的会话对象）：GPU 惰性装配 + 相机跟随
-/// （调用时点）→ 经活跃会话排程延迟叠加（引擎泛型
-/// `RenderPass::defer_overlay`——零 rapier 感知）。与 egui 的
-/// `t.draw_ui(panel)` 同一渲染行为：会话内调用、恒在游戏内容之上、
-/// flip 时单次落屏。每帧一次；2D 通道无深度附件（线管线硬契约）。
+/// t = `with screen.render()` 的会话对象）：会话探针 → 泛化本体（样本数
+/// = 屏 MSAA）。每帧一次；2D 通道无深度附件（线管线硬契约）。
 pub(crate) fn draw_debug(
     renderer: PyRef<PyDebugLinesRenderer>,
     sink: PyRef<PyLineSink>,
@@ -507,43 +677,94 @@ pub(crate) fn draw_debug(
     starfish_pygame::render::session::with_screen(|_| {}).map_err(|_| {
         vm.new_type_error("draw_debug 须在 `with screen.render():` 会话块内调用（t = 会话对象）")
     })?;
-    // GPU 惰性装配 + 相机跟随（调用时点尺寸快照；帧中 resize 由引擎
-    // 帧边界应用，下一帧相机置脏重设）
+    let screen = starfish_pygame::display::get_screen();
+    let samples = screen.sample_count();
+    let size = starfish_pygame::render::DrawTarget::size(screen);
+    let gpu = starfish_pygame::render::gpu_info().ok_or_else(|| {
+        vm.new_runtime_error("GPU 未就绪：须在 pygame.display.set_mode 之后调用")
+    })?;
+    draw_debug_generic(
+        renderer,
+        sink,
+        samples,
+        size,
+        &gpu,
+        |boxed| {
+            starfish_pygame::render::session::with_screen(|pass| {
+                pass.defer_overlay(boxed);
+            })
+            .expect("会话探针刚确认存在（同栈同步，无中途收口路径）");
+        },
+    )
+}
+
+/// Surface 变体（`t.draw_debug(renderer, sink)`，t = `with surf.render()`
+/// 会话对象）——排程到本面 flush 收口（画中画物理动画）。样本数 = 1
+/// （离屏面无 MSAA），按目标分槽自持管线。
+pub(crate) fn draw_debug_on_surface(
+    renderer: PyRef<PyDebugLinesRenderer>,
+    sink: PyRef<PyLineSink>,
+    surface: &starfish_pygame::render::Surface,
+    vm: &VirtualMachine,
+) -> PyResult<()> {
+    let gpu = starfish_pygame::render::gpu_info().ok_or_else(|| {
+        vm.new_runtime_error("GPU 未就绪：须在 pygame.display.set_mode 之后调用")
+    })?;
+    draw_debug_generic(
+        renderer,
+        sink,
+        1, // 离屏：无 MSAA
+        starfish_pygame::render::DrawTarget::size(surface),
+        &gpu,
+        |boxed| surface.defer_overlay(boxed),
+    )
+}
+
+/// draw_debug 本体（调度泛化，批次 48）：GPU 惰性装配（**按样本数分槽**
+/// ——Screen MSAA 与离屏 1x 各持管线）+ 相机跟随（viewport 脏置）→ 经
+/// schedule 排程（Screen = present 收口 / Surface = flush 收口）。
+fn draw_debug_generic(
+    renderer: PyRef<PyDebugLinesRenderer>,
+    sink: PyRef<PyLineSink>,
+    samples: u32,
+    size: (u32, u32),
+    gpu: &starfish_pygame::render::GpuInfo,
+    schedule: impl FnOnce(Box<dyn FnOnce(&mut starfish_pygame::render::OverlayCtx) + 'static>),
+) -> PyResult<()> {
     {
-        let gpu = starfish_pygame::render::gpu_info().ok_or_else(|| {
-            vm.new_runtime_error("GPU 未就绪：须在 pygame.display.set_mode 之后调用")
-        })?;
-        let screen = starfish_pygame::display::get_screen();
-        let size = starfish_pygame::render::DrawTarget::size(screen);
-        let mut st = renderer.state.borrow_mut();
-        if st.is_none() {
-            // 表面就位后装配（管线格式取 access 默认表面格式 + MSAA 匹配）
-            *st = Some(RendererGpu {
-                renderer: SfDebugLinesRenderer::new(&gpu.access, screen.sample_count()),
-                access: gpu.access.clone(),
-                viewport: (0, 0),
-            });
-        }
-        let st = st.as_mut().expect("state 刚写入");
+        let mut slots = renderer.states.borrow_mut();
+        let slot = match slots.iter_mut().find(|(s, _)| *s == samples) {
+            Some(slot) => slot,
+            None => {
+                slots.push((
+                    samples,
+                    RendererGpu {
+                        renderer: SfDebugLinesRenderer::new(&gpu.access, samples),
+                        access: gpu.access.clone(),
+                        viewport: (0, 0),
+                    },
+                ));
+                slots.last_mut().expect("槽刚 push")
+            }
+        };
+        let st = &mut slot.1;
         if st.viewport != size {
             st.renderer
                 .set_camera_ortho(&st.access, size, renderer.ppm.get());
             st.viewport = size;
         }
     }
-    // 排程（PyRef 'static——闭包持引用计数，present 时段解引用载荷；
+    // 排程（PyRef 'static——闭包持引用计数，present/flush 时段解引用载荷；
     // 主线程单线程契约下无并发借用）
-    starfish_pygame::render::session::with_screen(|pass| {
-        pass.defer_overlay(move |octx| {
-            let mut st = renderer.state.borrow_mut();
-            if let Some(g) = st.as_mut() {
-                let sink_ref = sink.inner.borrow();
-                octx.with_pass("rapier_debug", false, |pass| {
-                    g.renderer.draw(&g.access, pass, &sink_ref);
-                });
-            }
-        });
-    })
-    .expect("会话探针刚确认存在（同栈同步，无中途收口路径）");
+    let samples_closure = samples;
+    schedule(Box::new(move |octx| {
+        let mut slots = renderer.states.borrow_mut();
+        if let Some(slot) = slots.iter_mut().find(|(s, _)| *s == samples_closure) {
+            let sink_ref = sink.inner.borrow();
+            octx.with_pass("rapier_debug", false, |pass| {
+                slot.1.renderer.draw(&slot.1.access, pass, &sink_ref);
+            });
+        }
+    }));
     Ok(())
 }

@@ -1,10 +1,10 @@
-# pygame.rapier 对接专项测试（渲染对接 v1）
+# pygame_physics 对接专项测试（渲染对接 v1；原 pygame.rapier，2026-10-24 升格）
 # 控制台 [rapier-test] 逐项断言 + 落体调试线样张上屏（视觉验收：
 # 地面横线 + 三球下落碰撞——世界原点居中、y 向上、ppm=60）
 # 接口风格 = rapier 原生词汇（不 pygame 化）；绘制 = 会话排程形态
 # `t.draw_debug(renderer, sink)`（与 egui 的 t.draw_ui 同一渲染行为）
 import pygame
-import pygame.rapier as rp
+import pygame_physics as rp
 
 
 def game():
@@ -64,12 +64,46 @@ def game():
     except ValueError:
         st("无效 handle 报 ValueError", True)
 
+    # ── 写入面 / 触发器 / 查询（批次 47）──────────────────────────
+    # 瞬移 + 速度写入（读回对账）
+    world.set_translation(balls[0], (0.0, 3.5))
+    x1, y1 = world.translation(balls[0])
+    st("set_translation 瞬移", abs(x1) < 1e-4 and abs(y1 - 3.5) < 1e-4)
+    world.set_linvel(balls[0], (1.5, 0.0))
+    st("set_linvel 读回", abs(world.linvel(balls[0])[0] - 1.5) < 1e-4)
+    world.set_rotation(balls[1], 1.2)
+    st("set_rotation 读回", abs(world.rotation(balls[1]) - 1.2) < 1e-4)
+    world.apply_impulse(balls[2], (2.0, 0.0))
+    st("apply_impulse 生效（有横速）", world.linvel(balls[2])[0] > 0.0)
+    # 移除（临时体：建 → 查 → 移 → 查报错）
+    tmp = world.insert(
+        rp.RigidBodyBuilder("dynamic", translation=(5.0, 5.0)),
+        rp.ColliderBuilder("ball", radius=0.1),
+    )[0]
+    st("remove_body 移除", world.remove_body(tmp) is True)
+    try:
+        world.translation(tmp)
+        st("移除后查询报错", False)
+    except ValueError:
+        st("移除后查询报错", True)
+    # 射线：从触发区上方垂直向下命中地面（地面顶面 y=0，起点 y=2）
+    # 射线断言挪至帧 90（insert 后未 step 的 broad_phase 时序实证——见批次 47）
+    trig = world.insert(
+        rp.RigidBodyBuilder("fixed", translation=(0.0, 0.6)),
+        rp.ColliderBuilder("cuboid", hx=1.5, hy=0.3, sensor=True, events=True),
+    )[1]
+    flyer = world.insert(
+        rp.RigidBodyBuilder("dynamic", translation=(0.0, 3.0), can_sleep=False),
+        rp.ColliderBuilder("ball", radius=0.15),
+    )[0]
+    st("触发区 collider 句柄", isinstance(trig, int))
+
     # 调试三件套 + 相机
     draw = rp.DebugDraw()                       # 缺省 = 形状 + 接触位
     sink = rp.LineSink()
     renderer = rp.DebugLinesRenderer(ppm=60.0)
 
-    label = cjk.render("pygame.rapier 落体 + DebugLinesRenderer 叠加通道（原点居中 y↑ ppm=60）",
+    label = cjk.render("pygame_physics 落体 + DebugLinesRenderer 叠加通道（原点居中 y↑ ppm=60）",
                        True, (200, 200, 200))
 
     # ── 帧循环（事件 → step → collect → 游戏会话 + t.draw_debug 排程 → flip）
@@ -112,6 +146,13 @@ def game():
             st("球落至地面附近（y < -0.9）", y < -0.9)
             st("sim_time ≈ 1.5s", abs(world.sim_time() - 1.5) < 0.2)
             st("调试线会话排程 90 帧", True)  # draw_debug 未抛即通过
+            evs = world.drain_events()
+            hit = world.cast_ray((5.0, 1.0), (0.0, -1.0), None)
+            kinds = [e[0] for e in evs]
+            st("cast_ray 命中地面（距离 ≈ 2.5）", hit is not None and abs(hit[1] - 2.5) < 0.05)
+            st("触发器 started 事件", "started" in kinds)
+            st("触发器 stopped 事件", "stopped" in kinds)
+            st("drain_events 元组形态", all(len(e) == 3 for e in evs))
             asserted = True
             print("[rapier-test] SUMMARY",
                   "PASS" if not _fail else "FAIL " + str(_fail))

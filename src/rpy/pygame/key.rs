@@ -14,7 +14,7 @@ use std::cell::Cell;
     pub mod key {
         use rustpython_vm::{Py, PyPayload, PyRef, PyResult, VirtualMachine, builtins::PyModule, pyclass};
         use starfish_we::KeyCode;
-        use crate::rpy::mods::event::PyKey;
+        use crate::rpy::pygame::event::PyKey;
 
         /// K_* 全表（starfish locals::key 的 108 键，typed KeyCode；
         /// SHIFT/CTRL/ALT/META 为左键别名）。module_exec 钩子注册到

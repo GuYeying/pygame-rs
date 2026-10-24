@@ -71,9 +71,9 @@
 //! `event::add/remove_raw_listener`（翻译前原始事件多消费者镜像）+
 //! `gpu_info`/`with_window`/Screen 格式采样访问器；egui/rapier 只是
 //! 现役消费者，本 crate 负责绑定对接。绑定面**不 pygame 化**
-//! ——各自原生词汇（`pygame.rapier`：PhysicsWorld/RigidBodyBuilder/
+//! ——各自原生词汇（`pygame_physics`：PhysicsWorld/RigidBodyBuilder/
 //! ColliderBuilder/DebugDraw/LineSink/DebugLinesRenderer/collect；
-//! `pygame.egui`：init/frame(callback 即时模式 Ui)/draw/wants_pointer/
+//! `pygame_gui`：init/frame(callback 即时模式 Ui)/draw/wants_pointer/
 //! shutdown），实现分拆 `pyrapier.rs`/`pyegui.rs`（struct 声明在
 //! native_pygame、#[pyclass] impl 块外置——单 impl 块铁律内合法）。
 //! 帧序定约（同日 API 形态修订）：`event 泵（egui.capture 显式挂原始

@@ -445,3 +445,162 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     + rapier_test SUMMARY PASS + draw_test/egui_test 烟测零 panic；
     starfish workspace check 绿 + starfish-pygame 测试 49/51
     （唯一失败为存量字体路径环境问题）。
+- **批次 45（2026-10-24）：三模块平级架构（用户定约）**——rapier/egui
+  与 pygame 无 import 耦合，升格为独立顶层 Python 模块：
+  **`import pygame` / `import pygame_gui` / `import pygame_physics`**
+  （原 `pygame.egui` / `pygame.rapier` 子模块形态退役）；
+  - **rpy 目录形态**：根只放共享面——mod.rs（解释器装配 +
+    `install_modules` 入口，原 install_pygame）、registry.rs（共享
+    挂载器：mount_top = create+exec+sys.modules 直达 / mount_child =
+    父属性+选择性补账）、args.rs、bridge.rs、testhost/smoke；
+    **每顶层模块一文件夹**，自含其 #[pymodule] 声明 / 类型 / 运行时
+    本体：`pygame/`（mod.rs 内联顶层类型壳 pymodule + 22 子模块
+    绑定文件）、`pygame_gui/`（mod.rs 声明+类型、runtime.rs 实现
+    本体，feature "gui"）、`pygame_physics/`（同构，feature
+    "physics2d"）；
+  - **新增模块三步**（效仿模板）：①rpy 下建文件夹照抄 pygame_gui；
+    ②rpy/mod.rs 声明 + Cargo feature 按需；③registry try_install
+    末尾一行 mount_top；
+  - 协作面不变：`t.draw_ui(panel)` / `t.draw_debug(renderer, sink)`
+    仍是 pygame 会话方法（Rust 内部跨文件夹调用
+    pygame_gui::runtime / pygame_physics::runtime）——Python 面无
+    import 耦合；gui 的 `egui.event(e)` 收 pygame 模块创建的 PyEvent
+    （类型静态全局，跨模块 downcast 天然成立）；
+  - 陷阱记录：①pygame.rs 并入 pygame/mod.rs 后内层 pymodule 路径
+    维持 `crate::rpy::pygame::pygame::`（24 文件导入零改动）；
+    ②pygame_gui::runtime 的 UiBase 注入经 sys.modules 取自身模块——
+    键名必须随改名同步（"pygame.egui"→"pygame_gui"）；
+  - 验收：sig_probe 124/124 + binding_probe selftest 全 PASS
+    （exit 0 自然收尾）+ rapier_test 14/14 SUMMARY PASS（新 import）+
+    egui_test 61 帧烟测 + --no-default-features / --features
+    physics3d 编译绿。
+- **批次 46（2026-10-24）：pygame_physics3d——rapier3d 调试渲染 3D 绑定面**：
+  - **独立顶层模块**（三模块架构首个"照抄"落地：文件夹 mod.rs 声明 +
+    runtime.rs 本体，feature "physics3d" 对应 `import
+    pygame_physics3d`；physics2d 可双开——两模块类名相同但分属不同
+    Python 模块天然不冲突，与 rapier-starfish-debug dim2/dim3 同名
+    镜像面一一对应）；
+  - 类面 = PhysicsWorld/RigidBodyBuilder/ColliderBuilder/DebugDraw/
+    LineSink/DebugLinesRenderer（构造 kwargs 与 2D 同款；差异点）：
+    gravity/平移/速度收 `(x, y, z)` 三元组（args::SfFPoint3）；
+    **rotation 收欧拉角向量 (rx, ry, rz)**——rapier 0.36
+    `RigidBodyBuilder::rotation(AngVector)` 原生语义（dim3 官例同款），
+    查询 `rotation()` 返回四元数 (x, y, z, w)（Python 惯例 xyzw 序，
+    parry 0.31 的 glamx Quat 公开字段直取——nalgebra Quaternion 类型
+    不经 prelude 暴露，零新依赖）；
+  - **渲染差异（对 2D 契约反转处）**：DebugLinesRenderer 收
+    look-at 透视相机参数（eye/target/fov_y **弧度**，构造 kwargs 缺省
+    eye=(0,6,14) fov=1.0；`set_camera_lookat` 方法 + epoch/视口脏置
+    自动重设）；`t.draw_debug_3d(renderer, sink)` 会话方法排程
+    **深度通道**（`with_pass(..., depth=true)`——3D 线管线
+    Depth24Plus 硬契约，与 2D 的 false 相反；deferred 通道执行于游戏
+    会话全部 pass 收口后，深度附件独占无冲突）；
+  - 案例examples/rapier3d_test.py（15 断言：3D 落体 + 翻滚箱 +
+    负路径 + look-at 相机）+ _android 双注册（required-features
+    physics3d）；保持窗形态同 rapier_test；
+  - 验收：rapier3d_test 15/15 SUMMARY PASS + sig_probe 124/124 +
+    binding_probe 0 FAIL + rapier_test（2D）SUMMARY PASS +
+    --no-default-features / --features physics3d 编译绿。
+  - **修订（同日，用户定约）：pygame_physics3d 独立模块撤并——单模块
+    承载双维度**。`pygame_physics` 同时包含 2D 类面（无后缀，
+    feature "physics2d"）与 3D 类面（`PhysicsWorld3D` 等后缀区分，
+    feature "physics3d"），可双开互不冲突；模块挂载门控改
+    `any(physics2d, physics3d)`（只开 3D 也可用），类/函数/导入全部
+    按维度 cfg；runtime 拆 `runtime_2d.rs` / `runtime_3d.rs`；2D 面零
+    改动（既有脚本无破坏），3D collect 命名 `collect3d`（与 2D
+    `collect` 并存——RP 不支持重载）；rapier3d_test 15/15 复测 +
+    四 feature 组合编译绿。
+- **批次 47（2026-10-24）：rapier 写入面/触发器/查询 + egui 词汇扩充**：
+  - **rapier 写入面**（2D/3D 同款）：`set_translation` / `set_rotation`
+    （2D=角度 Rot2，3D=欧拉角向量 `rotation_from_angle`）/
+    `set_linvel` / `set_angvel` / `apply_impulse` / `wake_up` /
+    `set_gravity` / `remove_body`（连带碰撞体）+ 3D 补齐 `is_sleeping`；
+  - **触发器事件流**：world 自持 `ChannelEventCollector` + mpsc 通道
+    （构造即建）——`step_frame` 恒经 `step_frame_with_events` 步进；
+    `drain_events()` 返回 `[(kind, collider_handle1, collider_handle2)]`
+    （kind = "started"|"stopped"）；碰撞体 opt-in =
+    `ColliderBuilder(events=True)`（active_events COLLISION_EVENTS）；
+    引擎侧 rapier-starfish-debug 增 `step_frame_with_events`（dim2/dim3
+    对称）+ 隔离测试（事件流/射线全断言）；
+  - **查询面**：`cast_ray(origin, dir, max_toi=None)`（None = 缺省
+    100.0——**RP 方法参数无缺省，Python 侧显式传 None**）+ 
+    `intersection_pair(h1, h2)`；⚠️ 时序契约：insert 后须至少 step
+    一次方可查询（broad_phase 时序，实测 insert 后立即查询 None——
+    隔离测试分层定位：引擎侧 ok，绑定侧 step 接线 sed 未生效所致）；
+  - **egui 词汇 v2**：`text_edit`（单行；0.37 方法名
+    `text_edit_singleline`）/`radio_group` /`selectable` /
+    `progress_bar` /`drag_f32`（全位置传参）/`combo_box`（label 即
+    egui 内部 id——取全局唯一名）；
+  - 验收：rapier_test 25/25（触发器 started/stopped + 写入读回 + 移除
+    + 射线）+ rapier3d_test 22/22（同款 3D）+ egui_test 169 帧无异常
+    （新控件渲染）+ sig_probe 124/124 + binding_probe 0 FAIL +
+    引擎测试 27/27（含隔离测试）。
+- **批次 48（2026-10-24）：Surface 会话客人叠加通道（画中画 / 游戏内
+  面板，用户立项）**：
+  - **引擎侧**：`Surface::defer_overlay` + `pending_overlays` 排程
+    （镜像 Screen 形态）——执行体收口在 **flush**（batch pack 之后统一
+    执行；**batch 空也执行**——纯 UI/纯调试线表面由此成立）；颜色附件
+    = 本面纹理（Rgba8Unorm 离屏，Load 承接），深度附件 = with_depth
+    表面自持深度（Load 承接 pack 清后深度——3D 客人管线用）；
+    `RenderPass::defer_overlay` 的 Surface 分支接通（MRT 仍 v1 不支持）；
+  - **绑定侧**：三 runtime 调度泛化（draw_ui_generic / draw_debug_
+    generic / draw_debug_3d_generic——schedule 闭包参数化，Screen =
+    present 收口 / Surface = flush 收口）+ `draw_ui_on_surface` /
+    `draw_debug_on_surface` / `draw_debug_3d_on_surface` 变体；
+    **渲染器 state 按样本数分槽**（`states: Vec<(样本数, GPU 槽)>`——
+    同一渲染器实例同时服务 Screen MSAA 与离屏 1x，两管线并存）；
+    PySurfaceSession 挂 draw_ui/draw_debug/draw_debug_3d 三方法；
+  - **合成定约**：画中画 = 先烘 Surface（flush 收口烘进纹理）→ 主屏
+    会话内 `t.blit(pip, pos)`（Screen 对象无 blit——合成在会话内）；
+    3D 画中画面须 `depth_buffer=True` 创建（深度通道硬契约）；
+  - 案例 examples/pip_test.py（画中画 3D 物理动画 + egui 内嵌面板，
+    5 断言）+ _android 双注册；
+  - 验收：pip_test 5/5 SUMMARY PASS + rapier_test 25/25 +
+    rapier3d_test 22/22 + egui_test 烟测零异常 + sig_probe 124/124 +
+    binding_probe 0 FAIL + 引擎 49/51（存量字体环境问题）+ feature
+    组合编译绿。
+  - **修订（同日，用户实测 wgpu 校验错误）**：egui 画中画的**目标尺寸
+    覆盖**——`build_frame` / `draw_ui_generic` 增 target_size 参数：
+    egui 的 `raw.screen_rect` 与 `ScreenDescriptor.size_in_pixels` 都
+    按**渲染目标**取（Screen = 窗口 / Surface = 表面）。原实现两者取
+    窗口尺寸 → 布局按窗口铺开 + 剪裁矩形越界 → `set_scissor_rect`
+    校验 panic（800×600 剪裁画 260×140 面，实测）。指针事件坐标仍为
+    窗口系（画中画内 UI 交互映射留 v2——需平移进表面区域）。验收：
+    pip_test 5/5 零校验错误 + egui_test 127 帧零异常（Screen 路径
+    target_size=窗口，行为不变）。
+  - **修订（同日，用户定约：注入式交互替换指针路由）**——多 surface 的
+    egui 指针交互不做自动路由（臃肿），改为：**Screen = 窗口指针直通
+    （交互主目标）；Surface = 纯展示缺省**（窗口系指针事件屏蔽——对
+    表面无意义），交互走**注入器**：`egui.pointer_moved(x, y)` /
+    `egui.pointer_button(x, y, down)`（面板局部像素坐标——射线检测命中
+    游戏空间面板后换算喂入，消费于下一次 draw_ui）。实现 = runtime
+    injected 队列 + build_frame 尾部追加（Surface 变体屏蔽窗口指针，
+    Screen 不屏蔽）。**游戏空间面板交互闭环 = 物理引擎 cast_ray 命中
+    面板 quad → 命中点换算面板局部坐标 → 注入器喂 egui → 控件行为**。
+    验收：pip_test 6/6（新增注入点击断言——固定点替身射线，clicked
+    触发实证）+ egui_test 109 帧零异常。
+  - **修订（同日二次，用户定约：注入式方案回退）**——注入式交互评估
+    后回退（设计臃肿）。最终定约：**egui 的指针交互归 Screen**（窗口
+    指针直通）；Surface 的 draw_ui = **纯展示形态**（指针交互不进）。
+    缘由（egui 原生能力边界）：egui 的"自动检测"= 帧内控件命中
+    （hover/click 由 egui 依 widget rect 自算——注入原生事件后已自动
+    发生）；但其**原生多视口是 OS 窗口模型**（winit viewport，fork 已
+    剥离），离屏纹理不构成原生视口——"多目标自动事件分发"在 egui
+    原生能力之外。游戏空间面板如需交互，路径 = 射线命中 → 面板局部
+    坐标 → 原生 egui 事件喂入（届时按需重开，方案空间已探明）。
+  - **定约终版（同日三次修订，用户方案）**：**变量驱动交互**——放弃
+    事件路由/事件注入两条路线，egui 面板交互全部在游戏侧判定：游戏
+    循环每帧把状态写进面板实例属性（`panel.sim_t = world.sim_time()`），
+    draw 阶段控件**传值不回写**（checkbox/slider/drag/radio/text_edit
+    均值入值出形态天然支持——返回值忽略，显示完全跟随游戏状态）。
+    实现面唯一改动 = `build_frame` 增 `display_only` 开关（Surface
+    目标恒 true：窗口指针事件不进——防止鼠标滑过主屏时误触内嵌面板
+    控件；Screen 恒 false）。零新增 API、零注入机器。验收：pip_test
+    7/7（新增 sim_t 流入 + 落体判定复选两条变量驱动断言）。
+  - **屏蔽语义澄清（同日）**：`display_only` 的事件层屏蔽（Surface 帧
+    剥窗口指针事件）已完整生效。已知**纯视觉**边缘：egui 指针态随
+    Context 跨帧共享（Surface/Screen 帧同 Context），Screen 帧的指针位
+    在 Surface 帧残留——仅当指针位于面板 blit 区对应窗口位时出现 hover
+    残影。曾试 `PointerGone` 补丁后**主动撤回**：它会清共享指针态、
+    打断主屏进行中的拖拽（功能性 > 视觉性）。完整隔离 = per-surface
+    Context（字体图集翻倍），按需重开。

@@ -187,7 +187,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     interp.enter(|vm| {
         let run = || -> Result<(), String> {
             let scope = vm.new_scope_with_builtins();
-            rpy::install_pygame(vm);
+            rpy::install_modules(vm);
             dlog("[binding_probe] pygame 原生模块已注入");
             stage("原生模块注入完成");
             let code = vm

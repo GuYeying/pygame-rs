@@ -1,4 +1,5 @@
-//! pygame.egui —— egui-starfish-we 原生风格绑定面（v1，2026-10-24）。
+//! pygame_gui —— egui-starfish-we 原生风格绑定面（v1，2026-10-24；
+//! 2026-10-24 架构抽象升格独立顶层模块，原 pygame.egui）。
 //!
 //! 接口风格定约：**第三方库等价物，不 pygame 化**——OOP 门面
 //! `t.draw_ui(panel)`（t = `with screen.render()` 的会话对象），panel 为
@@ -36,7 +37,7 @@ use rustpython_vm::function::{ArgIntoFloat, FuncArgs};
 use rustpython_vm::{PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
 
 use crate::rpy::bridge;
-use crate::rpy::mods::egui::{PyUi, PyUiRegion};
+use super::{PyUi, PyUiRegion};
 
 /// egui 运行时（跨帧持有：输入桥 State + 绘制端 Renderer）。
 /// 主线程单例（ADR-6——egui Context 非 Send）；Rc 内壳供延迟叠加闭包
@@ -144,7 +145,7 @@ pub(crate) fn init(vm: &VirtualMachine) -> PyResult<()> {
         screen.color_format(),
         egui_wgpu::RendererOptions {
             msaa_samples: screen.sample_count(),
-            ..egui_wgpu::RendererOptions::PREDICTABLE
+            ..Default::default()
         },
     ));
     EGUI.with(|c| {
@@ -152,6 +153,7 @@ pub(crate) fn init(vm: &VirtualMachine) -> PyResult<()> {
             ctx,
             state,
             renderer,
+
         })))
     });
     bridge::devlog(&format!("[egui] init OK（CJK={cjk}，输入 = egui.event(e) 逐条喂）"));
@@ -164,7 +166,7 @@ pub(crate) fn init(vm: &VirtualMachine) -> PyResult<()> {
 /// 完整修饰键——egui 快捷键可用），经 `on_we_event` 进入输入桥。
 /// egui 无关变体（quit/touch/user/suspend 等）为 no-op。
 pub(crate) fn event(
-    ev: &crate::rpy::mods::event::PyEvent,
+    ev: &crate::rpy::pygame::event::PyEvent,
     vm: &VirtualMachine,
 ) -> PyResult<()> {
     let rc = EGUI.with(|c| c.borrow().as_ref().cloned());
@@ -237,11 +239,11 @@ fn pygame_to_we(ev: &starfish_pygame::event::Event) -> Option<starfish_we::Event
     })
 }
 
-/// UiBase 基类对象（sys.modules["pygame.egui"].UiBase——module_exec 注入
+/// UiBase 基类对象（sys.modules["pygame_gui"].UiBase——module_exec 注入
 /// 的 Python 层基类；frame 的 isinstance 校验用）
 fn uibase_class(vm: &VirtualMachine) -> PyResult<PyObjectRef> {
     let sys_modules = vm.sys_module.get_attr("modules", vm)?;
-    let module = sys_modules.get_item("pygame.egui", vm)?;
+    let module = sys_modules.get_item("pygame_gui", vm)?;
     module.get_attr("UiBase", vm)
 }
 
@@ -252,21 +254,48 @@ fn uibase_class(vm: &VirtualMachine) -> PyResult<PyObjectRef> {
 fn build_frame(
     rc: &Rc<RefCell<EguiRuntime>>,
     panel: &PyObjectRef,
+    target_size: (u32, u32),
+    display_only: bool,
     vm: &VirtualMachine,
 ) -> PyResult<(egui::FullOutput, Vec<egui::epaint::ClippedPrimitive>)> {
     // isinstance 强制：UiBase 子类（鸭子类型不放行——基类契约即文档）
     let uibase = uibase_class(vm)?;
     if !panel.is_instance(&uibase, vm)? {
         return Err(vm.new_type_error(
-            "draw_ui 须传 pygame.egui.UiBase 的子类实例（class HUD(UiBase) 并实现 draw(ui)）",
+            "draw_ui 须传 pygame_gui.UiBase 的子类实例（class HUD(UiBase) 并实现 draw(ui)）",
         ));
     }
     let draw = panel.get_attr("draw", vm)?;
-    let raw = {
+    let mut raw = {
         let mut rt = rc.borrow_mut();
         starfish_pygame::display::with_window(|w| rt.state.take_egui_input_we(w))
             .ok_or_else(|| vm.new_runtime_error("窗口未就绪（display 未初始化）"))?
     };
+    // **目标尺寸覆盖**（批次 48 画中画）：egui 的 screen_rect 必须等于
+    // 渲染目标（Screen = 窗口 / Surface = 表面）——否则布局按窗口铺开、
+    // 剪裁矩形越界（wgpu set_scissor_rect 校验 panic，实测）。
+    raw.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(target_size.0 as f32, target_size.1 as f32),
+    ));
+    // **纯展示形态**（批次 48 定约，用户立约：变量驱动交互）：指针事件
+    // 不进——面板显示完全由 Python 侧变量驱动（游戏侧判定交互、传值
+    // 不回写）；Screen 目标窗口指针直通。
+    if display_only {
+        raw.events.retain(|ev| {
+            !matches!(
+                ev,
+                egui::Event::PointerMoved(_)
+                    | egui::Event::PointerButton { .. }
+                    | egui::Event::Touch { .. }
+            )
+        });
+        // 已知边缘（纯视觉）：egui 指针态随 Context 跨帧共享（Surface 帧
+        // 与 Screen 帧同一 Context）——不推 PointerGone 是**有意的**（推
+        // 了会清掉共享指针态，打断主屏正在进行的拖拽）；残留表现为指针
+        // 恰好位于面板 blit 区对应窗口位时的 hover 残影。完整隔离 =
+        // per-surface Context（字体图集翻倍代价），按需重开。
+    }
     let full = rc.borrow().ctx.run_ui(raw, |ui| {
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(egui::Color32::TRANSPARENT))
@@ -346,28 +375,78 @@ impl Drop for DeferredFrame {
 pub(crate) fn draw_ui(vm: &VirtualMachine, panel: PyObjectRef) -> PyResult<()> {
     let rc = EGUI.with(|c| c.borrow().as_ref().cloned());
     let Some(rc) = rc else {
-        return Err(vm.new_runtime_error("pygame.egui 未初始化（先 init()）"));
+        return Err(vm.new_runtime_error("pygame_gui 未初始化（先 init()）"));
     };
     // 会话探针先行（探针到排程之间同一同步调用栈、单线程——会话必然
     // 仍存活；panel.draw 回调无法触达会话收口）
     starfish_pygame::render::session::with_screen(|_| {}).map_err(|_| {
         vm.new_type_error("draw_ui 须在 `with screen.render():` 会话块内调用（t = 会话对象）")
     })?;
-    let (output, jobs) = build_frame(&rc, &panel, vm)?;
-    let (w, h) = starfish_pygame::display::with_window(|win| win.size()).unwrap_or((0, 0));
+    draw_ui_generic(
+        vm,
+        rc,
+        panel,
+        starfish_pygame::display::with_window(|win| win.size()).unwrap_or((0, 0)),
+        false, // Screen：指针直通（交互主目标）
+        |boxed| {
+            starfish_pygame::render::session::with_screen(|pass| {
+                pass.defer_overlay(boxed);
+            })
+            .expect("会话探针刚确认存在（同栈同步，无中途收口路径）");
+        },
+    )
+}
+
+/// Surface 变体（`t.draw_ui(panel)`，t = `with surf.render()` 会话对象）
+/// ——排程到本面 flush 收口（batch pack 之后；画中画 / 游戏内面板）。
+/// **egui 渲染目标 = 表面尺寸**（screen_rect 与 ScreenDescriptor 均按
+/// 表面取——尺寸不一致 = 布局按窗口铺开 + 剪裁越界 wgpu 校验 panic，
+/// 批次 48 实测）。**纯展示形态**：指针交互不进（交互在游戏侧判定，
+/// 面板显示由 Python 侧变量驱动——变量驱动定约）。
+pub(crate) fn draw_ui_on_surface(
+    vm: &VirtualMachine,
+    panel: PyObjectRef,
+    surface: &starfish_pygame::render::Surface,
+) -> PyResult<()> {
+    let rc = EGUI.with(|c| c.borrow().as_ref().cloned());
+    let Some(rc) = rc else {
+        return Err(vm.new_runtime_error("pygame_gui 未初始化（先 init()）"));
+    };
+    draw_ui_generic(
+        vm,
+        rc,
+        panel,
+        starfish_pygame::render::DrawTarget::size(surface),
+        true, // Surface：纯展示（指针不进——变量驱动交互）
+        |boxed| surface.defer_overlay(boxed),
+    )
+}
+
+/// draw_ui 本体（调度泛化，批次 48）：构建 0.37 全管线帧 → 经 schedule
+/// 排程。Screen/Surface 两目标的差异只在排程收口点（present / flush）。
+fn draw_ui_generic(
+    vm: &VirtualMachine,
+    rc: std::rc::Rc<std::cell::RefCell<EguiRuntime>>,
+    panel: PyObjectRef,
+    target_size: (u32, u32),
+    display_only: bool,
+    schedule: impl FnOnce(
+        Box<dyn FnOnce(&mut starfish_pygame::render::OverlayCtx) + 'static>,
+    ),
+) -> PyResult<()> {
+    let (output, jobs) = build_frame(&rc, &panel, target_size, display_only, vm)?;
     let frame = DeferredFrame {
         rc,
         desc: egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [w, h],
+            // 渲染目标像素尺寸（Screen = 窗口 / Surface = 表面——批次 48
+            // 画中画：尺寸不一致 = egui 剪裁矩形越界 wgpu 校验 panic）
+            size_in_pixels: [target_size.0, target_size.1],
             pixels_per_point: output.pixels_per_point,
         },
         output: Some(output),
         jobs,
     };
-    starfish_pygame::render::session::with_screen(|pass| {
-        pass.defer_overlay(move |octx| run_deferred(octx, frame));
-    })
-    .expect("会话探针刚确认存在（同栈同步，无中途收口路径）");
+    schedule(Box::new(move |octx| run_deferred(octx, frame)));
     Ok(())
 }
 
@@ -577,6 +656,114 @@ impl PyUi {
         let px = px.into_float() as f32;
         with_ui(vm, |ui| {
             ui.add_space(px);
+        })
+    }
+
+    // ── 词汇扩充 v2（2026-10-24 批次 47：文本输入 / 选择 / 数值拖拽）──
+
+    /// text_edit(text) -> str：单行文本框（返回本帧内容——每帧以传入值
+    /// 重置，值状态由脚本侧保存）
+    #[pymethod]
+    fn text_edit(&self, text: PyStrRef, vm: &VirtualMachine) -> PyResult<String> {
+        let t = as_str(&text, vm)?.to_owned();
+        with_ui(vm, |ui| {
+            let mut s = t.clone();
+            ui.text_edit_singleline(&mut s);
+            s
+        })
+    }
+
+    /// radio_group(options, selected) -> int：单选组（返回本帧选中序号）
+    #[pymethod]
+    fn radio_group(
+        &self,
+        options: Vec<PyStrRef>,
+        selected: usize,
+        vm: &VirtualMachine,
+    ) -> PyResult<usize> {
+        let opts: Vec<String> = options
+            .iter()
+            .map(|o| as_str(o, vm).map(str::to_owned))
+            .collect::<PyResult<_>>()?;
+        with_ui(vm, |ui| {
+            let mut sel = selected;
+            for (i, o) in opts.iter().enumerate() {
+                ui.radio_value(&mut sel, i, o.as_str());
+            }
+            sel
+        })
+    }
+
+    /// selectable(text, selected) -> bool：可选行（本帧被点击 = True）
+    #[pymethod]
+    fn selectable(&self, text: PyStrRef, selected: bool, vm: &VirtualMachine) -> PyResult<bool> {
+        let t = as_str(&text, vm)?;
+        with_ui(vm, |ui| ui.selectable_label(selected, t).clicked())
+    }
+
+    /// progress_bar(fraction)：进度条（0..1 自动钳制；带百分比文本）
+    #[pymethod]
+    fn progress_bar(&self, fraction: ArgIntoFloat, vm: &VirtualMachine) -> PyResult<()> {
+        let f = (fraction.into_float() as f32).clamp(0.0, 1.0);
+        with_ui(vm, |ui| {
+            ui.add(egui::ProgressBar::new(f).show_percentage());
+        })
+    }
+
+    /// drag_f32(text, value, speed, min, max) -> float：拖拽（全位置传参；
+    /// 数值（返回本帧值；text 作前缀标签）
+    #[pymethod]
+    fn drag_f32(
+        &self,
+        text: PyStrRef,
+        value: ArgIntoFloat,
+        speed: Option<ArgIntoFloat>,
+        min: Option<ArgIntoFloat>,
+        max: Option<ArgIntoFloat>,
+        vm: &VirtualMachine,
+    ) -> PyResult<f64> {
+        let label = as_str(&text, vm)?.to_owned();
+        let speed = speed.map(|s| s.into_float()).unwrap_or(1.0);
+        let min = min.map(|m| m.into_float() as f32);
+        let max = max.map(|m| m.into_float() as f32);
+        with_ui(vm, |ui| {
+            let mut v = value.into_float() as f32;
+            let mut dv = egui::DragValue::new(&mut v)
+                .speed(speed)
+                .prefix(format!("{label}: "));
+            if let (Some(lo), Some(hi)) = (min, max) {
+                dv = dv.range(lo..=hi);
+            }
+            ui.add(dv);
+            v as f64
+        })
+    }
+
+    /// combo_box(label, options, selected) -> int：下拉选择（返回本帧选中
+    /// 序号；同 label 的两个下拉共享 egui 内部 id——label 全局取唯一名）
+    #[pymethod]
+    fn combo_box(
+        &self,
+        label: PyStrRef,
+        options: Vec<PyStrRef>,
+        selected: usize,
+        vm: &VirtualMachine,
+    ) -> PyResult<usize> {
+        let label = as_str(&label, vm)?.to_owned();
+        let opts: Vec<String> = options
+            .iter()
+            .map(|o| as_str(o, vm).map(str::to_owned))
+            .collect::<PyResult<_>>()?;
+        with_ui(vm, |ui| {
+            let mut sel = selected;
+            egui::ComboBox::from_id_salt(format!("pygame_gui_combo_{label}"))
+                .selected_text(opts.get(sel).map(String::as_str).unwrap_or(""))
+                .show_ui(ui, |ui| {
+                    for (i, o) in opts.iter().enumerate() {
+                        ui.selectable_value(&mut sel, i, o.as_str());
+                    }
+                });
+            sel
         })
     }
 

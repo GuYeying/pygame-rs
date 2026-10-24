@@ -16,7 +16,7 @@ use std::cell::Cell;
         use rustpython_vm::convert::TryFromObject;
         use rustpython_vm::{PyObjectRef, PyRef, PyResult, VirtualMachine};
 
-        use crate::rpy::mods::mixer::PySound;
+        use crate::rpy::pygame::mixer::PySound;
 
         /// array(sound) -> [[L, R], ...]（立体声）/ [[v], ...]（单声道）——
         /// 无 numpy 环境用嵌套 list 承载（真 pygame 是 numpy 数组，差异标注）
