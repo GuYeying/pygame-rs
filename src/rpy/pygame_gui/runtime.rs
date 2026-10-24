@@ -250,12 +250,15 @@ fn uibase_class(vm: &VirtualMachine) -> PyResult<PyObjectRef> {
 /// 构建（输入 → UI → 细分，CPU 侧）：panel 须为 UiBase 子类实例且实现
 /// draw(self, ui)（OOP 门面——isinstance 强制，基类 NotImplementedError
 /// 兜底"必须实现"；校验失败不消耗输入）；draw 内 Python 异常弃置产物
-/// （对账后）并上抛。
+/// 构建（输入 → UI → 细分，CPU 侧）：panel 须为 UiBase 子类实例且实现
+/// draw(self, ui)（OOP 门面——isinstance 强制，基类 NotImplementedError
+/// 兜底"必须实现"；校验失败不消耗输入）；draw 内 Python 异常弃置产物
+/// （对账后）并上抛。指针事件语义由**变体**在 raw 上预处理（Screen 直
+/// 通 / Surface 剥除——见 `strip_pointer`）。
 fn build_frame(
     rc: &Rc<RefCell<EguiRuntime>>,
     panel: &PyObjectRef,
-    target_size: (u32, u32),
-    display_only: bool,
+    raw: egui::RawInput,
     vm: &VirtualMachine,
 ) -> PyResult<(egui::FullOutput, Vec<egui::epaint::ClippedPrimitive>)> {
     // isinstance 强制：UiBase 子类（鸭子类型不放行——基类契约即文档）
@@ -266,36 +269,6 @@ fn build_frame(
         ));
     }
     let draw = panel.get_attr("draw", vm)?;
-    let mut raw = {
-        let mut rt = rc.borrow_mut();
-        starfish_pygame::display::with_window(|w| rt.state.take_egui_input_we(w))
-            .ok_or_else(|| vm.new_runtime_error("窗口未就绪（display 未初始化）"))?
-    };
-    // **目标尺寸覆盖**（批次 48 画中画）：egui 的 screen_rect 必须等于
-    // 渲染目标（Screen = 窗口 / Surface = 表面）——否则布局按窗口铺开、
-    // 剪裁矩形越界（wgpu set_scissor_rect 校验 panic，实测）。
-    raw.screen_rect = Some(egui::Rect::from_min_size(
-        egui::Pos2::ZERO,
-        egui::vec2(target_size.0 as f32, target_size.1 as f32),
-    ));
-    // **纯展示形态**（批次 48 定约，用户立约：变量驱动交互）：指针事件
-    // 不进——面板显示完全由 Python 侧变量驱动（游戏侧判定交互、传值
-    // 不回写）；Screen 目标窗口指针直通。
-    if display_only {
-        raw.events.retain(|ev| {
-            !matches!(
-                ev,
-                egui::Event::PointerMoved(_)
-                    | egui::Event::PointerButton { .. }
-                    | egui::Event::Touch { .. }
-            )
-        });
-        // 已知边缘（纯视觉）：egui 指针态随 Context 跨帧共享（Surface 帧
-        // 与 Screen 帧同一 Context）——不推 PointerGone 是**有意的**（推
-        // 了会清掉共享指针态，打断主屏正在进行的拖拽）；残留表现为指针
-        // 恰好位于面板 blit 区对应窗口位时的 hover 残影。完整隔离 =
-        // per-surface Context（字体图集翻倍代价），按需重开。
-    }
     let full = rc.borrow().ctx.run_ui(raw, |ui| {
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(egui::Color32::TRANSPARENT))
@@ -332,6 +305,24 @@ fn build_frame(
     Ok((output, jobs))
 }
 
+/// 延迟帧（构建产物暂存——defer_overlay 排程时装箱，present/flush 时段
+/// 执行）：持有 rc 引用计数 + 渲染描述 + egui 产物；Drop 兜底清 delta
+/// （排程未执行也 drop 安全——纹理 id 与渲染器对账后置空）。
+struct DeferredFrame {
+    rc: std::rc::Rc<std::cell::RefCell<EguiRuntime>>,
+    desc: egui_wgpu::ScreenDescriptor,
+    output: Option<egui::FullOutput>,
+    jobs: Vec<egui::epaint::ClippedPrimitive>,
+}
+
+impl Drop for DeferredFrame {
+    fn drop(&mut self) {
+        if let Some(mut out) = self.output.take() {
+            out.textures_delta.clear();
+        }
+    }
+}
+
 /// 弃置产物与渲染器对账：egui 端已记账的 set/free 增量喂给 Renderer
 /// （丢弃会让后续部分更新命中"未分配纹理"panic），随后清空 delta
 /// 保证 drop 安全。用于构建错误弃置路径。
@@ -349,29 +340,42 @@ fn discard_output(rt: &mut EguiRuntime, mut output: egui::FullOutput) {
     output.textures_delta.clear();
 }
 
-/// 延迟叠加载荷（defer 闭包的全部持有物）：Drop 兜底清 delta——闭包若
-/// 因退出/异常从未执行，带未应用条目的 TexturesDelta 直接 drop 会 panic
-/// （epaint 0.37 契约），Drop 先 clear 保证任意路径 drop 安全。
-struct DeferredFrame {
-    rc: Rc<RefCell<EguiRuntime>>,
-    output: Option<egui::FullOutput>,
-    jobs: Vec<egui::epaint::ClippedPrimitive>,
-    desc: egui_wgpu::ScreenDescriptor,
+/// 取原始输入（Screen/Surface 变体共用；窗口指针事件随 take 带出——
+/// 剥离语义归各变体自决）。
+fn take_raw_input(
+    rc: &Rc<RefCell<EguiRuntime>>,
+    vm: &VirtualMachine,
+) -> PyResult<egui::RawInput> {
+    let mut rt = rc.borrow_mut();
+    starfish_pygame::display::with_window(|w| rt.state.take_egui_input_we(w))
+        .ok_or_else(|| vm.new_runtime_error("窗口未就绪（display 未初始化）"))
 }
 
-impl Drop for DeferredFrame {
-    fn drop(&mut self) {
-        if let Some(mut out) = self.output.take() {
-            out.textures_delta.clear();
-        }
-    }
+/// 纯展示形态（Surface 目标专用）：剥窗口系指针事件——窗口指针坐标对
+/// 表面无意义，面板显示完全由 Python 侧变量驱动（交互在游戏侧判定、
+/// 传值不回写——变量驱动定约）。已知纯视觉边缘：egui 指针态随 Context
+/// 跨帧共享（Surface/Screen 帧同 Context），Screen 帧指针位残留可能造
+/// 成面板 hover 残影——不推 PointerGone 是**有意的**（会打断主屏进行中
+/// 的拖拽）；完整隔离 = per-surface Context（字体图集翻倍），按需重开。
+fn strip_pointer(mut raw: egui::RawInput) -> egui::RawInput {
+    raw.events
+        .retain(|ev| {
+            !matches!(
+                ev,
+                egui::Event::PointerMoved(_)
+                    | egui::Event::PointerButton { .. }
+                    | egui::Event::Touch { .. }
+            )
+        });
+    raw
 }
 
 /// draw_ui(panel)（`t.draw_ui(panel)` 的本体，t = `with screen.render()`
 /// 的会话对象）：①会话探针（会话外调用先报错——不消耗输入、不建 UI）
 /// ②构建（输入→UI→细分，CPU 侧，OOP 门面校验）③经活跃会话排程延迟
 /// 叠加（引擎泛型 `RenderPass::defer_overlay`——零 egui 感知）。
-/// 每帧一次；恒在游戏内容之上、恒单次落屏。
+/// 每帧一次；恒在游戏内容之上、恒单次落屏。**指针交互主目标**（窗口
+/// 指针直通）。
 pub(crate) fn draw_ui(vm: &VirtualMachine, panel: PyObjectRef) -> PyResult<()> {
     let rc = EGUI.with(|c| c.borrow().as_ref().cloned());
     let Some(rc) = rc else {
@@ -382,27 +386,26 @@ pub(crate) fn draw_ui(vm: &VirtualMachine, panel: PyObjectRef) -> PyResult<()> {
     starfish_pygame::render::session::with_screen(|_| {}).map_err(|_| {
         vm.new_type_error("draw_ui 须在 `with screen.render():` 会话块内调用（t = 会话对象）")
     })?;
-    draw_ui_generic(
-        vm,
-        rc,
-        panel,
-        starfish_pygame::display::with_window(|win| win.size()).unwrap_or((0, 0)),
-        false, // Screen：指针直通（交互主目标）
-        |boxed| {
-            starfish_pygame::render::session::with_screen(|pass| {
-                pass.defer_overlay(boxed);
-            })
-            .expect("会话探针刚确认存在（同栈同步，无中途收口路径）");
-        },
-    )
+    let (w, h) = starfish_pygame::display::with_window(|win| win.size()).unwrap_or((0, 0));
+    let mut raw = take_raw_input(&rc, vm)?;
+    raw.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(w as f32, h as f32),
+    ));
+    draw_ui_generic(vm, rc, panel, raw, |boxed| {
+        starfish_pygame::render::session::with_screen(|pass| {
+            pass.defer_overlay(boxed);
+        })
+        .expect("会话探针刚确认存在（同栈同步，无中途收口路径）");
+    })
 }
 
 /// Surface 变体（`t.draw_ui(panel)`，t = `with surf.render()` 会话对象）
 /// ——排程到本面 flush 收口（batch pack 之后；画中画 / 游戏内面板）。
 /// **egui 渲染目标 = 表面尺寸**（screen_rect 与 ScreenDescriptor 均按
 /// 表面取——尺寸不一致 = 布局按窗口铺开 + 剪裁越界 wgpu 校验 panic，
-/// 批次 48 实测）。**纯展示形态**：指针交互不进（交互在游戏侧判定，
-/// 面板显示由 Python 侧变量驱动——变量驱动定约）。
+/// 批次 48 实测）。**纯展示形态**：窗口指针事件剥除（变量驱动交互——
+/// 见 `strip_pointer`）。
 pub(crate) fn draw_ui_on_surface(
     vm: &VirtualMachine,
     panel: PyObjectRef,
@@ -412,35 +415,40 @@ pub(crate) fn draw_ui_on_surface(
     let Some(rc) = rc else {
         return Err(vm.new_runtime_error("pygame_gui 未初始化（先 init()）"));
     };
-    draw_ui_generic(
-        vm,
-        rc,
-        panel,
-        starfish_pygame::render::DrawTarget::size(surface),
-        true, // Surface：纯展示（指针不进——变量驱动交互）
-        |boxed| surface.defer_overlay(boxed),
-    )
+    let mut raw = strip_pointer(take_raw_input(&rc, vm)?);
+    raw.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(
+            starfish_pygame::render::DrawTarget::size(surface).0 as f32,
+            starfish_pygame::render::DrawTarget::size(surface).1 as f32,
+        ),
+    ));
+    draw_ui_generic(vm, rc, panel, raw, |boxed| surface.defer_overlay(boxed))
 }
 
 /// draw_ui 本体（调度泛化，批次 48）：构建 0.37 全管线帧 → 经 schedule
-/// 排程。Screen/Surface 两目标的差异只在排程收口点（present / flush）。
+/// 排程。Screen/Surface 两目标的差异（指针语义 / screen_rect / 收口点）
+/// 全在变体层的 raw 预处理与 schedule——本体零目标感知。
 fn draw_ui_generic(
     vm: &VirtualMachine,
     rc: std::rc::Rc<std::cell::RefCell<EguiRuntime>>,
     panel: PyObjectRef,
-    target_size: (u32, u32),
-    display_only: bool,
+    raw: egui::RawInput,
     schedule: impl FnOnce(
         Box<dyn FnOnce(&mut starfish_pygame::render::OverlayCtx) + 'static>,
     ),
 ) -> PyResult<()> {
-    let (output, jobs) = build_frame(&rc, &panel, target_size, display_only, vm)?;
+    let (w, h) = raw
+        .screen_rect
+        .map(|r| (r.width() as u32, r.height() as u32))
+        .unwrap_or((0, 0));
+    let (output, jobs) = build_frame(&rc, &panel, raw, vm)?;
     let frame = DeferredFrame {
         rc,
         desc: egui_wgpu::ScreenDescriptor {
-            // 渲染目标像素尺寸（Screen = 窗口 / Surface = 表面——批次 48
-            // 画中画：尺寸不一致 = egui 剪裁矩形越界 wgpu 校验 panic）
-            size_in_pixels: [target_size.0, target_size.1],
+            // 渲染目标像素尺寸 = 变体按目标设置的 screen_rect（Screen =
+            // 窗口 / Surface = 表面——尺寸不一致 = egui 剪裁越界 panic）
+            size_in_pixels: [w, h],
             pixels_per_point: output.pixels_per_point,
         },
         output: Some(output),

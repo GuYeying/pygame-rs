@@ -84,6 +84,7 @@ def game():
     asserted = False
     while True:
         for e in pygame.event.get():
+            egui.event(e)                # 显式逐条喂（不喂 = egui 无输入）
             if e.type == pygame.event.QUIT:
                 return
             if e.type == pygame.event.KEYDOWN and e.key == pygame.key.K_ESCAPE:

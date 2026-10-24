@@ -604,3 +604,9 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     残影。曾试 `PointerGone` 补丁后**主动撤回**：它会清共享指针态、
     打断主屏进行中的拖拽（功能性 > 视觉性）。完整隔离 = per-surface
     Context（字体图集翻倍），按需重开。
+  - **定约微调（同日，用户定约：参数撤除、规则内聚）**——`display_only`
+    bool 参数穿透撤除：`build_frame` / `draw_ui_generic` 收**现成的
+    `egui::RawInput`**，指针语义内聚到变体取输入路径（Screen =
+    `take_raw_input` 直通；Surface = `strip_pointer` 剥除——"非 Screen
+    无指针事件"规则单一归口）。ScreenDescriptor 尺寸由 raw.screen_rect
+    推导（变体已按目标设置）。行为不变（pip 7/7 + egui 129 帧复测）。
