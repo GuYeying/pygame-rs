@@ -104,7 +104,7 @@ def game():
         for e in pygame.event.get():
             if e.type == pygame.event.QUIT:
                 return
-            if e.type == pygame.event.KEYDOWN and e.key == pygame.event.K_ESCAPE:
+            if e.type == pygame.event.KEYDOWN and e.key == pygame.key.K_ESCAPE:
                 return
 
         

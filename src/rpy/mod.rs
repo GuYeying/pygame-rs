@@ -7,13 +7,21 @@
 //! - 三处 android 补丁（libffi 剔除 / ctypes 门控 / static_cell 全局单元）
 //!   位置与缘由见 `../starfish/reference/rustpython改动备忘录.md`
 //!
-//! 绑定面形态（批次 B 起）：**原生 `pygame` 模块**（`native_pygame`：
-//! pymodule 树 + Screen/Session/Event pyclass），`pygame_shim.py` 已退役；
-//! [`bridge`] = 引擎桥（宿主↔Python 共享状态 + 会话/事件/绘制真身 +
-//! 探针/旧别名注册），[`args`] = 收参层（FromArgs 结构体 + 参数类型）。
+//! 绑定面形态（批次 B 起，2026-10-24 整理批次拆分为多文件）：
+//! **原生 `pygame` 模块**——顶层类型在 `pygame`（pymodule 壳）、各子模块
+//! 绑定在 `mods/*`（每模块一文件）、注册挂载在 `registry`（event 先于
+//! key）、`bridge` = RP 薄壳（错误映射 / 收参壳 / downcast / devlog），
+//! `args` = 收参层（FromArgs 结构体 + 参数类型，全 crate 聚集于此）。
+//! 外接客人库实现本体：pyegui / pyrapier（#[pymodule] 声明在
+//! mods/egui、mods/rapier）。
 
-mod native_pygame;
-mod pygame_impls;
+#[cfg(feature = "gui")]
+mod pyegui;
+mod mods;
+mod pygame;
+#[cfg(feature = "physics2d")]
+mod pyrapier;
+mod registry;
 pub mod args;
 pub mod bridge;
 pub mod smoke;
@@ -42,7 +50,7 @@ pub fn new_interpreter() -> Interpreter {
 /// 原生 `pygame` 模块注入（宿主壳在 `interp.enter` 内、用户脚本前调用；
 /// 见 [`new_interpreter`] 的生命周期说明）。
 pub fn install_pygame(vm: &rustpython_vm::VirtualMachine) {
-    native_pygame::install(vm);
+    registry::install(vm);
 }
 
 pub use smoke::run_smoke;

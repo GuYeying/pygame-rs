@@ -211,7 +211,13 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
                         .repr(vm)
                         .map(|s| s.to_string())
                         .unwrap_or_else(|_| format!("{exc:?}"));
-                    dlog(tag, &format!("脚本异常: {msg}"));
+                    // 生成器耗尽（StopIteration）= 脚本正常收尾，非异常
+                    let cls = obj.class().name().to_string();
+                    if cls == "StopIteration" {
+                        dlog(tag, "脚本完成（生成器耗尽）");
+                    } else {
+                        dlog(tag, &format!("脚本异常: {msg}"));
+                    }
                     done = true;
                 }
             }

@@ -38,22 +38,6 @@ expect(type(scr).__name__ == "Screen", "set_mode → Screen 占位")
 expect(pygame.event.get() == [], "event.get() 无头排空")
 expect(pygame.event.Event is not None, "Event 类暴露（match 类模式解构用）")
 expect(pygame.time.get_ticks() >= 0, "time.get_ticks() 非负")
-
-# ── Rect：直通句柄（批次 C）─────────────────────────────────────
-r1 = pygame.Rect(10, 20, 30, 40)
-expect(type(r1).__name__ == "Rect", "Rect 构造")
-expect(r1.left == 10 and r1.top == 20 and r1.width == 30 and r1.height == 40, "Rect 四属性")
-expect(r1.x == 10 and r1.w == 30 and r1.h == 40, "x/y/w/h 别名")
-expect(r1.right == 40 and r1.bottom == 60 and r1.centerx == 25 and r1.centery == 40, "计算属性")
-expect(r1 == pygame.Rect(10, 20, 30, 40) and r1 != pygame.Rect(0, 0, 1, 1), "Rect 值相等/不等")
-r1.x = 5
-expect(r1.left == 5, "x setter 透传 left")
-r2 = r1.move(1, 2)
-expect(r2.left == 6 and r2.top == 22 and r1.left == 5, "move 返回新 Rect（本体不动）")
-expect(r1.collidepoint((6, 22)) and not r1.collidepoint((999, 999)), "collidepoint")
-expect(r1.colliderect(pygame.Rect(0, 0, 100, 100)), "colliderect")
-expect(not r1.contains(pygame.Rect(0, 0, 100, 100)), "contains 反例")
-
 # ── Key：typed 键值（批次 C）────────────────────────────────────
 expect(type(pygame.key.K_a).__name__ == "Key", "K_* typed（Key 实例）")
 expect(pygame.key.K_a == pygame.key.K_a and pygame.key.K_a != pygame.key.K_b, "Key 值相等/不等")
@@ -285,8 +269,8 @@ expect(abs(v2.length() - 5.0) < 1e-6, "Vector2.length")
 n = v2.normalize()
 expect(abs(n.x - 0.6) < 1e-6 and abs(n.y - 0.8) < 1e-6, "Vector2.normalize")
 expect(abs(v2.dot(pygame.math.Vector2(1, 0)) - 3.0) < 1e-6, "Vector2.dot")
-expect(pygame.version.ver == "0.9.20", "version.ver")
-expect(pygame.version.get_version() == (0, 9, 20), "version.vernum")
+expect(pygame.version.ver == "0.9.55", "version.ver")
+expect(pygame.version.get_version() == (0, 9, 55), "version.vernum")
 #expect(pygame.version.get_wgpu_version() == (2, 0, 20), "version.get_sdl_version 占位")
 
 for status, msg in RESULTS:

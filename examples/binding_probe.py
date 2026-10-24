@@ -212,7 +212,7 @@ def game():
             r.ellipse((0, 200, 90), (1, 2, 3, 4), 2)                   # width 显式
             r.arc((200, 60, 60), (10, 20, 30, 40), 0.0, 1.5)           # 弧度制
             r.arc((200, 60, 60), (1, 2, 3, 4), 0, 1)                   # 弧度兼容 int
-            r.rect((0, 200, 90), pygame.Rect(1, 2, 3, 4))              # Rect 实例直通
+            r.rect((0, 200, 90), (1, 2, 3, 4))                         # 序列形态（Rect 已退役）
         _ok = True
     except Exception as _e:
         _ok = False; print("    [selftest] 异常:", _e)
@@ -259,7 +259,7 @@ def game():
                 return
 
         
-        box = pygame.Rect(x, 270, 60, 60)   # Rect 直通句柄（批次 C）：实例直接当 draw 参数
+        box = (x, 270, 60, 60)              # 区域元组（Rect 已退役——碰撞/触发器归物理引擎）
         # ── 批次 K 数学驱动视觉自证（图元承载，零新建 GPU 表面——
         #  ADR-5 延迟提交红线）：四元数旋转的手 + lerp 脉冲圆 ──
         _ang = (pygame.time.get_ticks() // 6) % 360           # ~2.16s/圈

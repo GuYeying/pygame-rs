@@ -61,7 +61,7 @@ def game():
         for e in pygame.event.get():
             if e.type == pygame.event.QUIT:
                 return
-            if e.type == pygame.event.KEYDOWN and e.key == pygame.event.K_ESCAPE:
+            if e.type == pygame.event.KEYDOWN and e.key == pygame.key.K_ESCAPE:
                 return
 
         # 呼吸/脉冲用三角波（RP 冻结 stdlib 无 math——sin 换三角波近似；

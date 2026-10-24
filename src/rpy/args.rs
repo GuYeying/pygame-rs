@@ -1,8 +1,9 @@
 //! 收参层：Python 参数 → Rust 值的唯一整形点。
 //!
-//! 两组内容（消费方 = 原生 pygame 模块的 pymethod + bridge 的探针/旧全局）：
-//! - [`SfColor`]/[`SfRect`]/[`SfPoint`]/[`SfPoints`]——参数类型，TryFromObject
-//!   一次实现两形态通约（`new_function` 全局与 pymethod 同一条 bind_for 路径）；
+//! 两组内容（消费方 = 原生 pygame 模块的 pymethod；批次 41 后 bridge 只剩
+//! 收参壳调用，探针/旧全局已退役）：
+//! - [`SfColor`]/[`SfRect`]/[`SfPoint`]/[`SfPoints`]——参数类型
+//!   （TryFromObject，pymethod 与自由函数同一条 bind_for 路径）；
 //! - `Draw*Args` / `FillArgs`——draw 族的 FromArgs 收参结构体（pymethod 与
 //!   自由函数皆可直接收整个结构体）。
 //!
@@ -11,7 +12,8 @@
 //! - 颜色分量 0..=255，越界中文 TypeError；`(r, g, b)` 自动补 alpha=255；
 //! - 序列形态宽收（tuple / list / 任意可迭代），固定长度在类型层校验；
 //! - 批次 C 的 Rect pyclass 落地后，[`SfRect`] / [`SfPoint`] 在此增加
-//!   PyRef 直通分支（"直通句柄"终态）。
+//!   PyRef 直通分支（"直通句柄"终态）。（2026-10-24 修订：Rect 类型退役，
+//!   SfRect 直通分支移除——纯序列收参。）
 
 use rustpython_derive::FromArgs;
 use rustpython_vm::convert::TryFromObject;
@@ -45,7 +47,7 @@ pub struct SfColor(pub [u8; 4]);
 impl TryFromObject for SfColor {
     fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
         // 直通句柄分支：pygame.Color 实例 → 零转换拷贝（批次三十九）
-        if let Some(c) = obj.downcast_ref::<crate::rpy::native_pygame::PyColor>() {
+        if let Some(c) = obj.downcast_ref::<crate::rpy::pygame::pygame::PyColor>() {
             let c = c.get();
             return Ok(Self([c.r, c.g, c.b, c.a]));
         }
@@ -69,7 +71,7 @@ impl TryFromObject for SfColor {
     }
 }
 
-/// 矩形 `(x, y, w, h)`（序列或 `pygame.Rect` 直通句柄）。
+/// 矩形 `(x, y, w, h)`（序列形态；Rect 类型已退役——2026-10-24 定约）。
 #[derive(Debug, Clone, Copy)]
 pub struct SfRect {
     pub x: i32,
@@ -80,11 +82,6 @@ pub struct SfRect {
 
 impl TryFromObject for SfRect {
     fn try_from_object(vm: &VirtualMachine, obj: PyObjectRef) -> PyResult<Self> {
-        // 直通句柄分支：pygame.Rect 实例 → 零转换拷贝（批次 C）
-        if let Some(r) = obj.downcast_ref::<crate::rpy::native_pygame::PyRect>() {
-            let r = r.get();
-            return Ok(Self { x: r.left, y: r.top, w: r.width, h: r.height });
-        }
         let items = seq_i32(vm, obj)?;
         expect_len(vm, &items, 4, "rect (x, y, w, h)")?;
         let [x, y, w, h] = items.try_into().unwrap(); // 长度已验
@@ -168,6 +165,16 @@ pub(crate) struct GeometryArgs {
     pub(crate) indices: Option<PyObjectRef>,
     #[pyarg(any, optional)]
     pub(crate) color: Option<SfColor>,
+}
+
+// ── pygame.egui 收参（批次 42）──────────────────────────────────
+
+/// ui.horizontal(callback=None)：callback 缺省 None（无参 = with 区域
+/// 形态，返回 UiRegion；传回调 = egui 原生闭包形态）
+#[derive(FromArgs)]
+pub(crate) struct HorizontalArgs {
+    #[pyarg(any, optional)]
+    pub(crate) cb: Option<PyObjectRef>,
 }
 
 impl TryFromObject for SfFPoints {

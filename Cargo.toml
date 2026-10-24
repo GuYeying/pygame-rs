@@ -1,8 +1,23 @@
 [package]
 name = "pygame-rs"
-version = "0.3.0"
+version = "0.3.55"
 edition = "2024"
 description = "starfish 的 Python 绑定层：RustPython 内嵌壳 + pygame 绑定面（独立 crate，starfish 本体零 Python 资产）"
+
+[features]
+# ── 外接客人库开关（2026-10-24 feature 化；基座 + 维度细化）──
+# gui：与维度无关的 UI 库开关。
+# physics：基座（拉依赖 + 公共桥）；实际维度开 physics2d / physics3d
+#   （可同时开——rapier crate 的 dim2/dim3 命名空间天然并存）。
+#   只开 physics 不开维度 = 仅依赖图就位，Python 面无 rapier 模块。
+# 缺省 2D 全开保持现状；--no-default-features 轻量构建下对应 Python
+# 子模块随之消失（import 即 AttributeError）。
+default = ["gui", "physics2d"]
+gui = ["dep:egui-starfish-we", "dep:egui-wgpu"]
+physics = ["dep:rapier-starfish-debug"]
+physics2d = ["physics", "rapier-starfish-debug/2d"]
+# 预留：3D 绑定面（pygame.rapier3d）随 3D 批次落地
+physics3d = ["physics", "rapier-starfish-debug/3d"]
 
 [dependencies]
 starfish-std        = { path = "../starfish/crates/starfish-std" }
@@ -19,10 +34,17 @@ starfish-font       = { path = "../starfish/crates/starfish-font" }
 starfish-audio      = { path = "../starfish/crates/starfish-audio" }
 starfish-video      = { path = "../starfish/crates/starfish-video" }
 starfish-pygame     = { path = "../starfish/crates/starfish-pygame" }
-starfish-gui        = { path = "../starfish/crates/starfish-gui" }
-starfish-physics    = { path = "../starfish/crates/starfish-physics" }
-starfish-tilemap    = { path = "../starfish/crates/starfish-tilemap" }
-starfish-voxel      = { path = "../starfish/crates/starfish-voxel" }
+
+# ── 外接客人库（原生风格绑定面，2026-10-24 批次 42；feature 门控，见 [features]）──
+# rapier 物理适配层（2D v1；default 为空，features 必显式；wgpu 版本
+# 契约 30.0.1 与 starfish-render 同源解析）
+rapier-starfish-debug = { path = "../rapier-starfish-debug", features = ["2d"], optional = true }
+# egui 适配层（vendored fork；feature "render" 拉 egui-wgpu + starfish-render
+# 桥 SfEguiRenderer；egui 经它重导出，本 crate 不直依赖 egui）
+egui-starfish-we = { path = "../egui-starfish-we", features = ["render"], optional = true }
+# egui 绘制端（Renderer/ScreenDescriptor 类型面——egui-starfish-we 不重导出）
+egui-wgpu = { version = "0.37.0", optional = true }
+
 
 
 # math 绑定层的 glam 直绑（批次 K Vector3/Quaternion/Mat4；版本与 starfish
@@ -83,3 +105,24 @@ name = "draw_test"
 name = "draw_test_android"
 path = "examples/draw_test.rs"
 crate-type = ["cdylib"]
+
+# ── 外接客人库对接测试（渲染对接 v1，2026-10-24；随 feature 门控）──
+[[example]]
+name = "rapier_test"
+required-features = ["physics2d"]
+
+[[example]]
+name = "rapier_test_android"
+path = "examples/rapier_test.rs"
+crate-type = ["cdylib"]
+required-features = ["physics2d"]
+
+[[example]]
+name = "egui_test"
+required-features = ["gui"]
+
+[[example]]
+name = "egui_test_android"
+path = "examples/egui_test.rs"
+crate-type = ["cdylib"]
+required-features = ["gui"]

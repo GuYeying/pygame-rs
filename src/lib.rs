@@ -63,6 +63,31 @@
 //! 的跳过检查、事件泵手势标记）——由宿主页面保证首次手势先行
 //! （build_web.py 模板内建"▶ 点击启动"覆盖层，wasm 启动挂进 click
 //! 回调，产物天然合规）；脚本侧平台分支删除，三平台同代码。
+//! **批次 42**（2026-10-24，外接库渲染对接 v1）：rapier-starfish-debug
+//! 与 egui-starfish-we 挂上 pygame 屏幕。**分层定约**：接口核心先落
+//! starfish 的 pygame 模块且按通用情况设计（不针对特定库）——引擎侧
+//! 三件通用能力（starfish 批次 2026-10-24）：`Screen::with_overlay`
+//! （LoadOp::Load 叠加通道——游戏会话 pack 后、flip 前直绘）+
+//! `event::add/remove_raw_listener`（翻译前原始事件多消费者镜像）+
+//! `gpu_info`/`with_window`/Screen 格式采样访问器；egui/rapier 只是
+//! 现役消费者，本 crate 负责绑定对接。绑定面**不 pygame 化**
+//! ——各自原生词汇（`pygame.rapier`：PhysicsWorld/RigidBodyBuilder/
+//! ColliderBuilder/DebugDraw/LineSink/DebugLinesRenderer/collect；
+//! `pygame.egui`：init/frame(callback 即时模式 Ui)/draw/wants_pointer/
+//! shutdown），实现分拆 `pyrapier.rs`/`pyegui.rs`（struct 声明在
+//! native_pygame、#[pyclass] impl 块外置——单 impl 块铁律内合法）。
+//! 帧序定约（同日 API 形态修订）：`event 泵（egui.capture 显式挂原始
+//! 镜像）→ step_frame → collect → egui 事件逐条喂（egui.event(e)）+ 会话形态 t.draw_ui(hud)（OOP 门面：UiBase
+//! 子类实例，hud.draw(ui) 每帧，须在会话块内）→ with screen.render() as t: { 事件循环 egui.event(e) 显式喂；
+//! 游戏内容 + t.draw_ui(hud)（构建+会话排程）+ t.draw_debug(renderer, sink)（rapier 同款）} → flip（egui 恒在
+//! 游戏内容之上）`。嵌套布局 = `with ui.horizontal():` 区域对象（亦可
+//! 回调形态）。验收：`examples/rapier_test`（15/15）+ `examples/egui_test`
+//! （15/15，t.draw_ui 会话形态含负路径×3）桌面全 PASS。边界（v1
+//! 已知）：rapier 仅 2D、坐标原点居中 y 向上（与 pygame 像素系不同系）；
+//! egui 事件不拦截（consumed 过滤 v2）、无 IME/MouseLeave；Web/Android
+//! 编译门未开（arboard/rapier-parallel 的 wasm 问题待批次 43）。
+//! feature 细化（同日）：physics=基座、physics2d/physics3d=维度转发
+//! （可双开），default=["gui","physics2d"]；Python 模块名不变。
 //! 后续批次：surfarray/PixelArray/BufferProxy（已定案砍掉——GPU 回读
 //! 桥约束）、sprite 深化、
 //! dialog 轮询式 job API（Android）、面 B（starfish 直通模块）、

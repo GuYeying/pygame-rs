@@ -227,6 +227,128 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   合规）；嵌入页场景必然先点击；独立页自行用 html+js+css 挡一层。
   三平台行为一致：音频随时可播，无钩子、无跳过路径；通道索引停止后
   回收复用；
+- **批次 42（2026-10-24）：外接库渲染对接 v1**——rapier-starfish-debug
+  与 egui-starfish-we 挂上 pygame 屏幕。**分层定约（2026-10-24 用户立约）**：
+  接口核心**先落 starfish 的 pygame 模块（通用情况，不针对特定库设计）**，
+  本 crate 只做绑定对接；egui/rapier 是"现役消费者"而非接口设计目标。
+  绑定面**不 pygame 化**（第三方库等价物，各自原生词汇 + Python 难度控制）：
+  - **引擎侧通用能力**（starfish 批次 2026-10-24，依赖单向红线不破）：
+    `Screen::with_overlay`（LoadOp::Load 叠加通道——本层 batch 延迟提交
+    无活 pass 可借，外接者在游戏会话 pack 后、flip 前直绘）+
+    `event::add_raw_listener`/`remove_raw_listener`（翻译前原始事件
+    多消费者镜像表——pygame 翻译有损，egui 要修饰键/滚轮动量）+
+    `render::gpu_info` / `display::with_window` pub / Screen 格式采样
+    访问器；
+  - **`pygame.rapier`**（`pyrapier.rs`，2D v1）：PhysicsWorld/RigidBodyBuilder/
+    ColliderBuilder（构造 kwargs 替代原生链式）/DebugDraw/LineSink/
+    DebugLinesRenderer + collect；句柄 = 不透明 int（generation<<32|index）；
+    坐标契约 = 米制 y 向上原点居中（与 pygame 像素系不同系）；
+  - **`pygame.egui`**（`pyegui.rs`）：init（幂等，CJK 复用 `font::preloaded`
+    预载链）/frame(callback)/draw/wants_pointer/wants_keyboard/shutdown；
+    回调收 PyUi（egui Ui 直绘包装——CURRENT_UI 指针模式：拷出即还锁 +
+    horizontal 前置值恢复，跨帧持有干净报错不悬垂）；帧序拆两调用点：
+    frame=输入→UI→细分（CPU 侧），draw=update_texture→update_buffers→
+    叠加通道 render→free+clear→platform_output（0.37 帧序契约，错误路径
+    弃置产物也须先 clear delta——drop panic 实测）；init 经
+    `event::add_raw_listener` 登记消费者、shutdown 凭 id 撤除；
+  - **帧序定约**：`event 泵 → step_frame → collect → egui.frame →
+    游戏会话 → rapier 调试线叠加 → egui.draw 叠加 → flip`（叠加在
+    会话后=画家序）；
+  - **API 形态修订（同日第三轮，用户四点反馈落地）**：
+    ①**事件捕获显式化**——init 不再自动挂监听，`egui.capture(enable=True)`
+    手动开启/撤除（pygame 翻译有损：KeyDown 不带修饰键，egui 快捷键需
+    完整原始词汇——原始镜像仍走引擎 `add_raw_listener`，脚本层可见）；
+    ②**嵌套布局 with 语法**——`with ui.horizontal():`（无参返回 UiRegion
+    区域对象：begin=`Ui::new_child` 建子 Ui 换 CURRENT_UI、exit=`advance_
+    cursor_after_rect` 回填父光标；世代守卫防跨帧持有，frame 收尾兜底
+    回收漏配对区；回调形态并存）；③**draw 会话内语义**——`egui.draw()`
+    改走引擎 `defer_overlay` 延迟排程（flip 时在全部游戏内容 pack 之后
+    统一落屏），放 `with screen.render():` 块内/外皆正确（egui=HUD 顶层
+    语义由结构保证；**⑥会话形态终版（同日第四轮）——`egui.frame`/`egui.draw`
+    模块函数移除，合并为 `t.draw_ui(panel)`**（t = `with screen.render()`
+    的会话对象，PyScreenSession 新方法；"画到哪个目标"由会话对象表达）。
+    引擎侧 = 会话级泛型 `RenderPass::defer_overlay`（Surface/MRT v1 提示
+    不支持）；draw_ui 内部 = 会话探针先行（会话外调用先报错——不消耗
+    输入不建 UI）→ 构建（OOP 校验→输入→UI→细分）→ 经活跃会话排程；
+    产物不再暂存运行时（构建即排程，覆盖残留/对账路径消失，仅构建错误
+    路径保留 discard_output）；④updates_* 通用方案定约——`draw_ui` 单
+    调用承载 egui 0.37 全管线（update_texture→update_buffers→render→
+    free+clear→platform_output 是**硬协议**不可拆：顺序错=panic 实测），
+    DeferredFrame Drop 兜底清 delta（排程未执行也 drop 安全）；用户可见
+    面等真需求出现再开（用户纹理上传 v2）；⑤**OOP 门面**（同日追加）——
+    **⑥会话形态 + 事件逐条显式喂（同日第四/五轮定约）**：
+    - `t.draw_ui(panel)` / `t.draw_debug(renderer, sink)`（PyScreenSession
+      会话方法，"画到哪个目标"由会话对象表达；引擎侧 = 会话级泛型
+      `RenderPass::defer_overlay`，Surface/MRT v1 提示不支持）；draw_ui
+      内部 = 会话探针先行（会话外调用先报错——不消耗输入不建 UI）→
+      构建 → 经活跃会话排程；产物不暂存运行时（构建即排程）；
+    - **事件逐条显式喂**——`egui.capture()`（引擎原始镜像）退役，
+      `egui.event(e)` 在 `pygame.event.get()` 循环内逐条调用（不喂则
+      egui 无输入——捕获行为在数据流层完全可见）；配套 **PyEvent 全保真
+      重构**（载荷 = 引擎 typed 枚举原样持有；原扁平五槽丢
+      repeat/text/mod/宽高——textinput 塞 key 槽、resized 塌缩 "other"），
+      新 getset：`mod`（KMOD 位，真 pygame `e.mod` parity）/repeat/text/
+      w/h；引擎 `Event::KeyDown/KeyUp` 补 `modifiers` 字段 +
+      `key::mods_to_bits/bits_to_mods` 双向换算（egui 重建完整原始事件
+      ——快捷键可用）；egui 无关变体（quit/touch/user 等）喂入为 no-op；`egui.frame(panel)`
+    收 `pygame.egui.UiBase` 子类实例（isinstance 强制，鸭子类型不放行），
+    面板实现 `draw(self, ui)`（基类 NotImplementedError 兜底"必须实现"），
+    经实例属性捕获状态与游戏对象。**UiBase 是 Python 层类**（egui 模块
+    module_exec 注入 exec——Rust pyclass 做基类会被 Constructor Args 卡
+    死）；**嵌套 module_exec 必须首行手动调 `__init_attributes(vm, module)`**
+    （用户版 exec 顶替宏自动版，漏调 = no_attr 类静态类型未初始化 panic，
+    pygame 顶层同款先例）；弃置产物（负路径/覆盖残留/shutdown）先与渲染
+    器**对账**（`discard_output`：set 喂入 + free 释放——egui 端已记账，
+    直接丢会让后续部分更新命中"未分配纹理"panic，实测）；
+  - **feature 细化（同日定案）**：`physics` 改基座（拉依赖无维度），
+    `physics2d`/`physics3d` 转发维度（可双开——crate dim2/dim3 命名空间
+    天然并存）；default = ["gui", "physics2d"]；3D 绑定面
+    （`pygame.rapier3d`）随 3D 批次落地；
+  - 验收：`cargo run --release -p pygame-rs --example rapier_test`
+    （15/15）+ `egui_test`（15/15，OOP 门面版含负路径×2）桌面全 PASS；
+    双注册含 `_android`。
+    v1 边界：rapier 仅 2D；egui 事件不拦截/无 IME；Web/Android 编译门
+    未开（arboard 与 rapier-parallel 的 wasm 问题——批次 43）。
+- **批次 43（2026-10-24）：绑定层多文件拆分落地 + 事件帧尾清空**：
+  - **native_pygame.rs（4347 行）退役** → `mods/` 每子模块一文件（24 个）
+    + `pygame.rs`（顶层类型壳 pymodule）+ `registry.rs`（手工挂载序，
+    替代父模块自动 submodule_inits）；pygame_impls.rs 退役：五类
+    （PyKey/PySound/PySurface/PyRect/PyColor）的 `#[pyclass] impl` 块
+    **搬回各自宿主 pymodule 块内**。RP 宏分工（拆分批次根因）：
+    struct 上的 `#[pyclass]` 只生成 `PyClassDef`+`StaticType`，
+    **`PyClassImpl`（方法/槽位半）只由 `#[pyclass] impl` 块生成**——
+    struct+impl 同宿 pymodule 合法（pymodule 宏跳过 Item::Impl 不吃
+    其属性；font.rs 先例），历史 E0119 是混合态重复块所致；
+  - 拆分文件定约：文件头 `use rustpython_derive::{pymodule, pyclass,
+    FromArgs};` + 尾部 `pub(crate) use xxx::module_def;` + 跨文件引用
+    类型 re-export（event::PyEvent/PyKey、mixer::PySound、font::PyFont）；
+    args.rs 收拢 FromArgs（HorizontalArgs 等）+ bridge.rs 收拢 exc_msg
+    等辅助（RP 薄壳）；
+  - **两个提取事故教训**：①`no_attr` 标记丢失（video.rs
+    PyTargetsSession）→ pymodule 宏对该项 bail → 错误路径原样 re-emit
+    后续属性泄漏 → "cannot find attribute pyfunction"（真实病灶不在
+    报错行）；②`targets`/`PyTargetsSession` 段在 HEAD 里位于 **pygame
+    父模块直接作用域**（video mod 闭合后、sprite mod 前），归宿
+    pygame.rs 非 video.rs；
+  - **registry 挂载序实测修正**：event 先于 key——key 的 K_* 挂载
+    钩子（module_exec）取 PyKey 的 static type，PyKey 在 event 的
+    `__init_attributes` 里创建（"event 最后"旧定约作废；首次运行即
+    "static type has not been initialized" panic）；
+  - **事件帧尾清空（用户定约，落引擎侧）**：`event::pump()` 起点排空
+    上帧未消费事件——不管宿主用没用（不消费积压只会让陈旧 QUIT 延迟
+    爆发）；`post_user` 改走 USER_PENDING 列 pump 时补发（**保一帧**：
+    post 后下一帧 get/poll 可见；同帧 post→get 不可见——契约变更，
+    引擎测试同步改写）；`clear()` 连带清 pending；
+  - 验收：sig_probe 134/134 + binding_probe（ quit 驱动正常收尾）+
+    rapier_test SUMMARY PASS（90 帧落体全过，**断言收口后保持窗续演
+    到用户关窗/ESC——视觉验收期**）+ egui_test 300 帧烟测
+    无异常（交互验收留人工）；
+  - **验收轮补丁（用户实测反馈）**：①模块案例脚本 `pygame.event.K_*`
+    落点错（K_* 全表在 `pygame.key`——`pygame.event.K_*` 不存在，短路
+    之下平时不炸、**一按任意键即 AttributeError**）——rapier/draw/
+    font/transparent 四脚本改 `pygame.key.K_ESCAPE`（egui/binding_probe
+    原本就对）；②testhost 生成器耗尽（StopIteration）改记"脚本完成"，
+    不再误报"脚本异常"。
 - **Surface/transform/image（批次 F+，GPU 直通定约）**：
   `pygame.Surface((w,h))` pyclass（starfish Surface owned payload；构造/
   使用须在 display init 后——GPU 槽约束，与真 pygame 差异）；
@@ -256,13 +378,15 @@ Python 触达 Rust 的分层链（自上而下，单向）：
 - **K_* 键值是 typed `Key` 实例（非整数）**——引擎无 pygame 键码表，
   typed 是 starfish locals 既定决策；`e.key == pygame.K_x` 用 Key 值相等
   （Comparable），`Event.key` 自批次 C 起也是 Key 实例。108 键表在
-  native_pygame `KEY_TABLE`，经父模块用户版 `module_exec` 注册；
+  `mods/key.rs` `KEY_TABLE`，经 key 模块用户版 `module_exec` 注册到
+  `pygame.key`（挂载序 event 先于 key——批次 43）；
 - **pyclass 可变 payload 用 `Cell<T>`**（RP pymethod 无 `&mut self` 形态，
   内置类型一律内部可变性；Rect 是 Copy 故 `Cell<Rect>` 即可）；
 - 旧扁平别名（fill/rect/flip/quit_requested）已随 rp_main_loop /
-  window_test 退役（存档 `examples/legacy/`）——`new_function` 直注册
-  形态的限制（7 参上限、tuple 平铺消费、Rust tuple/`Vec<(i32,i32)>` 无
-  TryFromObject）随之消失；存档复活需重挂 [[example]] 并恢复别名面；
+  window_test 退役并**剔除**（2026-10-24 清理——文件曾存档
+  `examples/legacy/`，git 历史提交 cdf143e 仍可查；原留档理由"无 git
+  防丢失"已失效）——`new_function` 直注册形态的限制（7 参上限、
+  tuple 平铺消费、Rust tuple/`Vec<(i32,i32)>` 无 TryFromObject）随之消失；
 - 生成器脚本只定义不实例化，壳负责 `call`——模块级自调用
   （`game = game()`）报 `'generator' object is not callable`；
 - `&VirtualMachine` 必须在原生函数形参**末位**（两形态通约）。
@@ -299,3 +423,25 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   `doc/log/`（每日批次日志）、`reference/rustpython改动备忘录.md`（RP 三处
   android 补丁的位置与缘由；独立 crate 后该文件仍在 starfish 仓库，本仓库
   Cargo.toml/rpy 注释里的 `reference/rustpython改动备忘录.md` 指它）。
+- **批次 44（2026-10-24）：Rect 类型退役（引擎+绑定两侧联动）**——
+  用户定约：GPU 渲染下 Rect 未达原版 pygame"描述 surface 信息"的等价
+  能力，且**碰撞/触发器今后统一走物理引擎**：
+  - starfish 侧（用户手工删 rect.rs + gui/physics 两 crate 后收尾）：
+    **draw.rs 重写**——全部绘制函数改**无返回值**签名（"受影响 Rect"
+    = CPU 脏矩形时代产物，GPU 全帧 present 无意义）；
+    **`IRect = [i32; 4]` 数组别名**（`[x, y, w, h]`，用户定约：struct
+    载体也不要）承载 clip/scissor/blit_area 内部几何；`DrawTarget`
+    trait 的 fill/blit/blit_centered/blit_area 返回 `()`；
+  - pygame-rs 侧：**`pygame.Rect` pyclass 删除**（struct + `#[pyclass]
+    impl` + Constructor/Comparable/Representable + collidelist* 的
+    rect_list 助手——碰撞查询面随之消失）；`Surface.blit/fill` 与三会话
+    （Screen/Surface/Targets）的 fill/blit/blit_area/text 全部改无返回
+    值；`Surface.get_rect` 删除；`args::SfRect` 去 Rect 直通分支
+    （纯序列收参 `(x, y, w, h)`）；绘制调用点 `IRect::new(...)` →
+    数组字面量 `[x, y, w, h]`；mods prelude 去 PyRect；
+  - 脚本侧：sig_probe Rect 断言段删除（134→124 项）；binding_probe
+    Rect 实例参数改元组（`r.rect(color, (1,2,3,4))`、`box = (x,270,60,60)`）；
+  - 验收：sig_probe 124/124 + binding_probe selftest 全 PASS（0 FAIL）
+    + rapier_test SUMMARY PASS + draw_test/egui_test 烟测零 panic；
+    starfish workspace check 绿 + starfish-pygame 测试 49/51
+    （唯一失败为存量字体路径环境问题）。

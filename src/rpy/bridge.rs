@@ -1,4 +1,4 @@
-//! 引擎桥：Python 面（native_pygame/pygame_impls）触达 starfish 的
+//! 引擎桥：Python 面（pygame.rs / mods/*）触达 starfish 的
 //! **RP 薄壳层**（批次 41 后零引擎状态——状态归 starfish 公共 API）。
 //!
 //! 剩余职责（全部因函数签名含 RP 类型而不可下沉引擎）：
@@ -137,9 +137,9 @@ pub(crate) fn blit_area<T: BdTarget>(
     area: SfRect,
     color: Option<SfColor>,
     vm: &VirtualMachine,
-) -> PyResult<starfish_pygame::Rect> {
+) -> PyResult<()> {
     let src = src_obj
-        .downcast_ref::<crate::rpy::native_pygame::PySurface>()
+        .downcast_ref::<crate::rpy::pygame::pygame::PySurface>()
         .ok_or_else(|| vm.new_type_error("src 须为 pygame.Surface 实例"))?;
     if area.w <= 0 || area.h <= 0 || src.size().0 == 0 || src.size().1 == 0 {
         return Err(vm.new_value_error("area 尺寸须为正且源面非空"));
@@ -147,7 +147,7 @@ pub(crate) fn blit_area<T: BdTarget>(
     Ok(target.blit_area(
         &src.surface,
         (dest.0, dest.1),
-        starfish_pygame::Rect::new(area.x, area.y, area.w, area.h),
+        [area.x, area.y, area.w, area.h],
         color.map(|c| c.0).unwrap_or([255, 255, 255, 255]),
     ))
 }
@@ -215,7 +215,7 @@ pub(crate) fn quad_corners<T: BdTarget>(
 ) -> PyResult<()> {
     let src = args
         .texture
-        .downcast_ref::<crate::rpy::native_pygame::PySurface>()
+        .downcast_ref::<crate::rpy::pygame::pygame::PySurface>()
         .ok_or_else(|| vm.new_type_error("texture 须为 pygame.Surface 实例"))?;
     if args.corners.0.len() != 4 || args.uvs.0.len() != 4 {
         return Err(vm.new_value_error(format!(
@@ -280,3 +280,12 @@ pub(crate) fn sound_source_to_data(
     }
 }
 
+
+/// Python 异常 → 可读文本（PyBaseException 无 Display，repr 转）。
+/// 原属 native_pygame（install 错误链），整理批次归 bridge 辅助函数。
+pub(crate) fn exc_msg(vm: &VirtualMachine, e: rustpython_vm::builtins::PyBaseExceptionRef) -> String {
+    let obj: PyObjectRef = e.into();
+    obj.repr(vm)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| "<unrepr-able exception>".to_owned())
+}
