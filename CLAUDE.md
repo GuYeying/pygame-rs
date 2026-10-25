@@ -715,3 +715,50 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - **rapier3d_test 布局定稿**：主屏直渲（用户方案验证路径）+ 画布内
     帧计数活体；Web 模板增 #raf RAF 计数 + webglcontextlost 探针
     （CTX-LOST 红字直报）——"raf 跳+画布黑"三态判据供长跑诊断。
+- **批次 52（2026-10-24）：渲染架构阶段 A——全局相机 + blit_transform
+  单接口收拢 + SpriteMaterial 正名 + 附件类型收敛**：
+  - **全局相机定约**（starfish c4512b6 系列改动的收口层）：相机 uniform
+    （`@group(0)@binding(0) 64B mat4x4 MVP`）全局唯一——Gpu 挂唯一
+    CameraRig + `CameraState = Auto2d | Auto3d{fov,near,far} | Manual`；
+    pack 时按状态解 MVP（Auto = 按目标尺寸隐式跟随[resize 天然生效，
+    免钩子]；Manual = set_camera override 一处设置全体生效）；
+    Screen/Surface/MRT 三处相机字段删除（每 Surface 省一份 uniform+bind）；
+  - **相机 MVP 每 pack 一次性 uniform + bind**（批次九坑的相机版）：
+    主屏多次 pack 挂 pending 统一提交而 write_buffer 即时——共享 buffer
+    时同帧"正交→透视→正交"交替 pack 的 MVP 互相覆盖（首版 demo 盲验
+    3D 卡片全部飞出屏外定位）；与 vbo 同款一次性内联副本免疫；
+  - **blit_transform(src, mat4, tint)**：单接口收拢——Mat4 承载一切
+    变换（2D 仿射零拷贝旋转/缩放/镜像，替代 transform 烘焙；3D 模型
+    矩阵空间放置，render_depth 会话下与 3D 场景正确遮挡）；四角
+    transform_point3 → push_quad_corners_3d（pos3 本就在）；默认管线
+    cull=none（new_2d 默认）镜像绕序天然安全；三会话（Screen/Surface/
+    MRT）均绑定，**tint 必传**（白色=(255,255,255)；RustPython 裸
+    Option 参数不自动可选）；
+  - **pygame.render 子模块**（新，registry 挂载）：`camera_ortho/
+    camera_perspective`（构造）+ `Camera.with_view(mat4)/mvp()` +
+    `set_camera/reset_camera/camera_mvp/camera_state`（全局相机 API）
+    + `init(dim,fov,near,far,cull,blend)`（愿望槽**部分覆盖**：set_mode
+    前定型；GPU 已就绪[宿主壳预置形态]时相机维即时切换，cull/blend
+    编译期定型不追溯）；`pygame.init(dim=2|3)` = render.init(dim=)
+    引擎级简写（同款双时点生效）；
+  - **SpriteMaterial 正名**（原 Material）：定位改写为"pygame 固定
+    渲染管线的状态材质"（内嵌 sprite shader + 变体缓存 + cull/blend
+    创建期愿望），类型全 pub(crate) 内部化不暴露（定制管线走后续
+    ResourceAccess 批次）；
+  - **附件类型收敛**：PassColor/PassDepth 删除，EncodeCtx 直用
+    starfish ColorAttachment/DepthAttachment（formats 平行数组供管线
+    选取）——与 OverlayCtx 同轨，砍掉 pygame→starfish 手写转换层；
+  - **blit_transform_demo**（新案例）：上半 2D 三联（旋转/缩放/镜像 +
+    transform.rotate 烘焙对照）+ 下半透视相机空间放置三卡片（近大
+    远小 + tint 红绿蓝）——桌面/Web 双盲验通过（首轮盲验抓出相机
+    uniform 覆盖 bug 即此案例的价值证明）；
+  - **验收**：starfish 49 单测过（font::metrics 历史失败与本次无关）；
+    桌面 surf_probe/pip_test/rapier3d_test SUMMARY PASS + binding_probe
+    46/46（含 targets.mrt + render 挂载）；wasm 四案例重打包
+    （blit_transform_demo/pip_test/surf_probe/rapier3d_test）Web 盲验过；
+  - **后续批次（方案已定稿待逐批推进）**：B=客人相机对齐（egui 优先
+    vendor fork egui-wgpu——唯一不同构者；rapier 调试线接全局 mvp 零
+    管线改造；font/gfxdraw 自动对齐）；C=starfish-render 重导出 +
+    Py 包装（暴露面收敛：ResourceAccess + 主屏 RenderSurface 两入口，
+    wgpu 裸对象零出界，不开 features 口）；D=with raw_render() 直绘
+    会话（set_pipeline/set_bind_group/draw_mesh，经 OverlayCtx 回放）。

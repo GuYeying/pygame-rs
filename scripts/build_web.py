@@ -49,6 +49,7 @@ REGISTRY = {
     "pip_test": (True, "画中画/游戏内面板：Surface 会话客人叠加（3D 物理动画 + 内嵌面板，[pip-test] 行）"),
     "surf_probe": (True, "Surface 链路五象限探针：纯 fill / 2D 形状 / 深度面 / 2D 调试线 / 3D 调试线离屏逐项验证（[surf-probe] 行；须 --features physics3d）"),
     "parity_test": (True, "绑定收官 parity：颜色表/色彩空间/mixer Channel+Effect/深度会话（[parity-test] 行）"),
+    "blit_transform_demo": (True, "blit_transform 单接口收拢：上半 2D 仿射三联（旋转/缩放/镜像 + 烘焙对照），下半透视相机 + 模型矩阵空间放置（近大远小，[blit-demo] 行）"),
 }
 
 # 特例 features（缺省 = default features：gui + physics2d）

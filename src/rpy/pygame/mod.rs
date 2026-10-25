@@ -287,6 +287,37 @@ pub mod pygame {
             Ok(())
         }
 
+        /// blit_transform(src, mat4, tint=None)：变换 blit（单接口收拢
+        ///——Mat4 承载一切变换：2D 仿射 / 3D 模型矩阵空间放置）
+        #[pymethod]
+        fn blit_transform(
+            &self,
+            src: PyRef<PySurface>,
+            mat: PyRef<crate::rpy::pygame::math::math::PyMat4>,
+            tint: Option<SfColor>,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            use starfish_pygame::render::DrawTarget;
+            DrawTarget::blit_transform(
+                &*self.surface,
+                &src.surface,
+                mat.0.get(),
+                tint.map(|c| c.0),
+            );
+            let _ = vm;
+            Ok(())
+        }
+
+        /// set_camera(camera)：全局相机 override（全局语义——渲染
+        /// 架构批次五十二：Surface 自身无相机字段）
+        #[pymethod]
+        fn set_camera(
+            &self,
+            camera: PyRef<crate::rpy::pygame::render::render::PyCamera>,
+        ) {
+            starfish_pygame::render::set_camera(&camera.0);
+        }
+
         /// blit_area(src, dest, area, color=None)：UV 子区域贴图
         /// （with_batch push_quad_uv 直通——源面像素坐标子区域一次四边形）
         #[pymethod]
@@ -581,6 +612,34 @@ pub mod pygame {
         #[pymethod]
         fn blit(&self, src: PyRef<PySurface>, dest: args::SfPoint, vm: &VirtualMachine) -> PyResult<()> {
             bridge::with_session(vm, |t| t.blit(&src.surface, (dest.0, dest.1)))
+        }
+
+        /// blit_transform(src, mat4, tint=None)：变换 blit（**单接口
+        /// 收拢——Mat4 承载一切变换**）：2D 仿射零拷贝旋转/缩放/镜像
+        ///（替代 transform 烘焙）；3D 模型矩阵空间放置（render_depth
+        /// 会话下与 3D 场景正确遮挡）。
+        #[pymethod]
+        fn blit_transform(
+            &self,
+            src: PyRef<PySurface>,
+            mat: PyRef<crate::rpy::pygame::math::math::PyMat4>,
+            tint: Option<SfColor>,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            use starfish_pygame::render::DrawTarget;
+            bridge::with_session(vm, |t| {
+                DrawTarget::blit_transform(t, &src.surface, mat.0.get(), tint.map(|c| c.0))
+            })
+        }
+
+        /// set_camera(camera)：全局相机 override（后续全部渲染生效
+        /// 直到 pygame.render.reset_camera——渲染架构批次五十二）
+        #[pymethod]
+        fn set_camera(
+            &self,
+            camera: PyRef<crate::rpy::pygame::render::render::PyCamera>,
+        ) {
+            starfish_pygame::render::set_camera(&camera.0);
         }
 
         /// blit_area(src, dest, area, color=None)：UV 子区域贴图
@@ -908,8 +967,19 @@ pub mod pygame {
         i32::try_from_object(vm, o.clone()).unwrap_or(0)
     }
     /// 经典全量语义占位：引擎初始化由宿主壳完成，返回 (0, 0)。
+    /// dim=2|3（默认 2）：渲染愿望简写（= pygame.render.init(dim=)
+    /// 同源——3 = Auto3d 透视默认相机）。双时点生效：set_mode 前定型；
+    /// GPU 已就绪（宿主壳预置形态）时相机维即时切换。
     #[pyfunction]
-    fn init() -> (usize, usize) {
+    fn init(dim: Option<i64>) -> (usize, usize) {
+        if let Some(d) = dim {
+            let mut wish = starfish_pygame::render::current_wish();
+            wish.dim3d = d == 3;
+            starfish_pygame::render::store_wish(wish);
+            if starfish_pygame::render::gpu_info().is_some() {
+                starfish_pygame::render::reset_camera();
+            }
+        }
         (0, 0)
     }
 
@@ -1057,6 +1127,31 @@ pub mod pygame {
             })
         }
 
+        /// blit_transform(src, mat4, tint=None)：变换 blit（单接口收拢
+        ///——Mat4 承载一切变换；MRT 双写目标同变换）。
+        #[pymethod]
+        fn blit_transform(
+            &self,
+            src: PyRef<PySurface>,
+            mat: PyRef<crate::rpy::pygame::math::math::PyMat4>,
+            tint: Option<SfColor>,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            use starfish_pygame::render::DrawTarget;
+            bridge::with_mrt_session(vm, |p| {
+                DrawTarget::blit_transform(p, &src.surface, mat.0.get(), tint.map(|c| c.0))
+            })
+        }
+
+        /// set_camera(camera)：全局相机 override（全局语义）。
+        #[pymethod]
+        fn set_camera(
+            &self,
+            camera: PyRef<crate::rpy::pygame::render::render::PyCamera>,
+        ) {
+            starfish_pygame::render::set_camera(&camera.0);
+        }
+
         /// blit_area(src, dest, area, color=None)：UV 子区域贴图
         /// （with_batch push_quad_uv 直通）。
         #[pymethod]
@@ -1096,6 +1191,7 @@ pub(crate) mod mixer;
 pub(crate) mod mouse;
 pub(crate) mod net;
 pub(crate) mod permission;
+pub(crate) mod render;
 pub(crate) mod sndarray;
 pub(crate) mod sprite;
 pub(crate) mod time;

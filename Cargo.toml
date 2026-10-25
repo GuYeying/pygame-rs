@@ -174,3 +174,11 @@ name = "surf_probe_android"
 path = "examples/surf_probe.rs"
 crate-type = ["cdylib"]
 required-features = ["physics3d"]
+
+[[example]]
+name = "blit_transform_demo"
+
+[[example]]
+name = "blit_transform_demo_android"
+path = "examples/blit_transform_demo.rs"
+crate-type = ["cdylib"]

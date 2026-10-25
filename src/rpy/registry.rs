@@ -66,6 +66,7 @@ fn try_install(vm: &VirtualMachine) -> Result<(), String> {
         child("net", pygame::net::module_def(&vm.ctx)),
         child("dialog", pygame::dialog::module_def(&vm.ctx)),
         child("gfxdraw", pygame::gfxdraw::module_def(&vm.ctx)),
+        child("render", pygame::render::module_def(&vm.ctx)),
         child("mask", pygame::mask::module_def(&vm.ctx)),
         child("permission", pygame::permission::module_def(&vm.ctx)),
         child("video", pygame::video::module_def(&vm.ctx)),
