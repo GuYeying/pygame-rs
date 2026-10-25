@@ -17,3 +17,4 @@ Thumbs.db
 pygame-rs/src/rpy/dependencies/
 _sig_io_tmp.bin
 scripts/__pycache__/
+dist/

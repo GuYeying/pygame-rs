@@ -1,0 +1,14 @@
+# 桌面 Windows 打包配置（build_windows.py --init 生成；可直接改）
+[app]
+name = "blit_transform_demo"                # 案例名（examples/<name>.py 为游戏源码）
+title = "blit_transform_demo"               # 分发名（dist 目录与 zip 名）
+
+[build]
+mode = "release"               # RustPython 铁律：恒 release（勿改）
+features = []                  # cargo features：gui（默认含）/
+                               #   physics3d / physics2d 按需追加
+
+[assets]
+include = []                   # 额外资源 glob（相对仓库根），如：
+                               #   ["resources/**", "assets/**/*.png"]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # 源:目标（CJK 预载）

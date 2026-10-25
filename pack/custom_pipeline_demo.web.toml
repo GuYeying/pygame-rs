@@ -1,0 +1,11 @@
+# Web 打包配置（build_web.py --init 生成）
+[app]
+name = "custom_pipeline_demo"
+windowed = true               # true = canvas 窗口页 / false = 控制台页
+caption = "自建 WGSL 管线 + raw_render 直绘：access 资源链（Shader/Mesh/BindGroup/Pipeline）+ 全局相机定约 + time 呼吸渐变 quad（[cp-demo] 行）"
+
+[build]
+features = []              # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）

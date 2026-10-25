@@ -12,9 +12,13 @@
   4. 组装 base + classes.dex + .so（.so 恒 ZIP_DEFLATED）
   5. zipalign 4 + apksigner（debug.keystore）
 
+配置 = pack/<名>.android.toml（--init <名> 生成模板；buildozer 风格
+分节、更细粒度——Android 平台认识的键 Android 平台用）。命令行参数
+仍可覆盖 toml 值。
+
 用法：
-  python build_apk.py <示例名> [--dir <crate目录>] [--abi arm64-v8a]
-                      [--out <产物目录>] [--dex <classes.dex路径>]
+  python build_apk.py --init <名>          # 生成 pack/<名>.android.toml
+  python build_apk.py <名> [--abi ...]     # 读 toml 打包（参数可覆盖）
 
   示例名用桌面名（binding_probe），Android 侧自动取 <名>_android
   （仓库双注册惯例：桌面 <名> + [[example]] <名>_android cdylib）。
@@ -38,8 +42,25 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 ABI_DEFAULT = "arm64-v8a"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pack_common import load_cfg
+
+ANDROID_TEMPLATE = """# Android APK 打包配置（build_apk.py --init 生成；可直接改）
+[app]
+name = "{name}"                # 案例名（桌面名；Android 侧 <名>_android）
+orientation = "landscape"      # landscape / portrait
+
+[build]
+abi = "arm64-v8a"              # arm64-v8a / x86_64 / armeabi-v7a
+features = []                  # cargo features（physics3d 等）
+# dex = "path/to/classes.dex" # 显式 dex（缺省自动探测）
+
+[package]
+# out = "target/android-apk"  # 产物目录（缺省）
+"""
 SCRIPT_DIR = Path(__file__).resolve().parent
 CRATE_DIR_DEFAULT = SCRIPT_DIR.parent          # pygame-rs/（独立后仍成立）
+PACK_DIR = CRATE_DIR_DEFAULT / "pack"          # toml 配置目录（三平台共享）
 
 
 def die(msg: str) -> "None":
@@ -112,16 +133,46 @@ def find_dex(crate: Path, triple: str, explicit: str) -> Path:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="starfish Android APK 统一打包")
-    ap.add_argument("example", help="桌面示例名（如 binding_probe；Android 侧自动取 <名>_android）")
+    ap = argparse.ArgumentParser(description="starfish Android APK 统一打包（toml 驱动）")
+    ap.add_argument("example", nargs="?", help="桌面示例名（pack/<名>.android.toml）")
+    ap.add_argument("--init", metavar="名", help="生成 pack/<名>.android.toml 模板")
     ap.add_argument("--dir", default=str(CRATE_DIR_DEFAULT), help="示例所属 crate 目录（默认 pygame-rs；根示例传 ..）")
-    ap.add_argument("--abi", default=ABI_DEFAULT)
+    ap.add_argument("--abi", default=None, help="覆盖 toml 的 abi（默认 arm64-v8a）")
     ap.add_argument("--out", default=None, help="产物目录（默认 <仓库根>/target/android-apk）")
     ap.add_argument("--dex", default=None, help="classes.dex 显式路径（默认自动探测）")
-    ap.add_argument("--orientation", default="landscape", help="屏幕方向（默认 landscape，与历史可跑包一致）")
+    ap.add_argument("--orientation", default=None, help="覆盖 toml 的屏幕方向")
     ap.add_argument("--features", default=None,
-                    help="cargo features（如 physics3d；缺省 = crate default features）")
+                    help="覆盖 toml 的 cargo features（缺省 = crate default features）")
     args = ap.parse_args()
+
+    if args.init:
+        PACK_DIR.mkdir(exist_ok=True)
+        t = PACK_DIR / f"{args.init}.android.toml"
+        if t.exists():
+            die(f"已存在: {t}")
+        t.write_text(ANDROID_TEMPLATE.format(name=args.init), encoding="utf-8")
+        print(f"[OK] 模板已生成: {t}（改完直接 python build_apk.py {args.init}）")
+        return
+    if not args.example:
+        ap.error("未指定示例名（或 --init <名> 生成模板）")
+
+    # toml 配置（存在则读；命令行参数覆盖 toml 值）
+    cfg = {"app": {}, "build": {}, "package": {}}
+    t = PACK_DIR / f"{args.example}.android.toml"
+    if t.is_file():
+        cfg = load_cfg(t)
+        print(f"[cfg] {t}")
+    else:
+        print(f"[cfg] 未找到 {t}——纯参数模式（历史行为）")
+    args.abi = args.abi or cfg.get("build", {}).get("abi") or ABI_DEFAULT
+    args.orientation = args.orientation or cfg.get("app", {}).get("orientation") or "landscape"
+    if args.features is None:
+        feats = cfg.get("build", {}).get("features", [])
+        args.features = ",".join(feats) if feats else None
+    if args.dex is None:
+        args.dex = cfg.get("build", {}).get("dex")
+    if args.out is None:
+        args.out = cfg.get("package", {}).get("out")
 
     crate = Path(args.dir).resolve()
     if not (crate / "Cargo.toml").is_file():

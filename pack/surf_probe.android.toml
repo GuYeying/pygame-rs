@@ -1,0 +1,12 @@
+# Android APK 打包配置（build_apk.py --init 生成；可直接改）
+[app]
+name = "surf_probe"                # 案例名（桌面名；Android 侧 <名>_android）
+orientation = "landscape"      # landscape / portrait
+
+[build]
+abi = "arm64-v8a"              # arm64-v8a / x86_64 / armeabi-v7a
+features = ["physics3d"]          # cargo features（surf_probe 须 3D）
+# dex = "path/to/classes.dex" # 显式 dex（缺省自动探测）
+
+[package]
+# out = "target/android-apk"  # 产物目录（缺省）

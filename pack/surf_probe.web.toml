@@ -1,0 +1,11 @@
+# Web 打包配置（build_web.py --init 生成）
+[app]
+name = "surf_probe"
+windowed = true               # true = canvas 窗口页 / false = 控制台页
+caption = "Surface 链路五象限探针：纯 fill / 2D 形状 / 深度面 / 2D 调试线 / 3D 调试线离屏逐项验证（[surf-probe] 行；须 --features physics3d）"
+
+[build]
+features = ["physics3d"]              # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）

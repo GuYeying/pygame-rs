@@ -1,0 +1,11 @@
+# Web 打包配置（build_web.py --init 生成）
+[app]
+name = "font_test"
+windowed = true               # true = canvas 窗口页 / false = 控制台页
+caption = "pygame.font 专项测试：构造族/度量/render 一等化/CJK 链路逐项断言 + 字体样张（[font-test] 行）"
+
+[build]
+features = []              # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）

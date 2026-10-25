@@ -899,3 +899,22 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - **下期立项**（用户定夺）：① 资源打包 = 打包脚本控制资源列表
     （跨平台 io 已备，路径对齐即可——不做 asset:// 协议层）；
     ② 桌面端抽象 python.exe 形态 + 移动端链接库两种导出方式设计。
+- **批次 57（2026-10-25）：打包体系 toml 化——三平台独立脚本 + 各自
+  配置 + init 模板（用户定夺：buildozer 风格分节、更细粒度）**：
+  - **桌面 python.exe 形态落地**：`pygame-runner`（src/bin）——通用
+    运行器，一个 exe 跑任意游戏目录（main.py + 资源，cwd 切游戏
+    目录保资源相对路径语义）；`build_windows.py`（windows.toml：
+    app/build/assets 分节，资源 = fonts 对拷 + include glob）→
+    dist/<名>/（runner + main.py + 资源）+ zip——**实跑验证**：
+    dist 通用 exe 跑 blit demo 完整画面（截图确认）；
+  - **build_web.py 重构**：REGISTRY/FEATURES 常量退役 → pack/
+    <名>.web.toml（14 案例全迁移）；`--init <名>` 模板 / `--all`
+    全打 / 名单单打；CJK 字体部署保留；
+  - **build_apk.py 重构**：android.toml 驱动（app/build/package 分节
+    ：orientation/abi/features/dex/out）；命令行参数覆盖 toml 值；
+    toml 缺失时回退纯参数模式（历史兼容）；surf_probe 全链验证
+    （physics3d 从 toml，五步 + lib_name 自检 ✓）；
+  - **pack_common.py**：三脚本共享 toml 读取（tomllib → tomli →
+    内置 mini 解析 fallback——打包配置语法子集，零依赖）；
+  - **pack/ 目录**：三平台 toml 各自独立（<名>.windows/.web/.android
+    .toml），A 平台用 A 认识的键（用户定约）。

@@ -1,0 +1,11 @@
+# Web 打包配置（build_web.py --init 生成）
+[app]
+name = "pip_test"
+windowed = true               # true = canvas 窗口页 / false = 控制台页
+caption = "画中画/游戏内面板：Surface 会话客人叠加（3D 物理动画 + 内嵌面板，[pip-test] 行）"
+
+[build]
+features = ["physics3d"]              # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）

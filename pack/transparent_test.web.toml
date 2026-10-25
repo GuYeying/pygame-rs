@@ -1,0 +1,11 @@
+# Web 打包配置（build_web.py --init 生成）
+[app]
+name = "transparent_test"
+windowed = true               # true = canvas 窗口页 / false = 控制台页
+caption = "透明窗口专项验证：桌宠形态基座（TRANSPARENT 创建 + 透明合成 + set_opacity 呼吸；[transparent-test] 行）"
+
+[build]
+features = []              # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）

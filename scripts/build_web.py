@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""pygame-rs Web 构建脚本（wasm32 构建 + wasm-bindgen 胶水 + HTML 加载页）。
+"""pygame-rs Web 构建脚本（产品化批次 toml 化，2026-10-25）。
 
-与 build_apk.py 同风格的 Web 侧统一入口——每个示例各自产物，互不覆盖，
-逐一在 pygame-rs/web/ 下测试。
+配置 = pack/<名>.web.toml（每案例一份；--init <名> 生成模板——
+buildozer 风格分节、更细粒度：Web 平台认识的键 Web 平台用）。
 
 用法：
-  python scripts/build_web.py binding_probe           # 窗口类示例（canvas）
-  python scripts/build_web.py sig_probe --console     # 控制台类示例（输出在 F12）
-  python scripts/build_web.py --all                   # 清单内全部构建
+    python scripts/build_web.py --init my_game   # 生成 pack/my_game.web.toml
+    python scripts/build_web.py my_game [名...]  # 读 toml 打包
+    python scripts/build_web.py --all            # pack/*.web.toml 全打
 
 产物：pygame-rs/web/<名>.html + <名>.js + <名>_bg.wasm
 测试：cd web && python -m http.server 8000
-      浏览器打开 http://localhost:8000/<名>.html
-      （file:// 直接打开无效——浏览器禁止 file 协议 fetch wasm）
-
-前置：rustup target add wasm32-unknown-unknown
-      wasm-bindgen-cli 版本必须与 Cargo.lock 严格一致（见 Cargo.lock 的
-      wasm-bindgen 行；不一致报 "not compatible with version of the
-      wasm-bindgen in the dependency tree"）。
+      浏览器打开 http://localhost:8000/<名>.html（file:// 无效）
+前置：rustup target add wasm32-unknown-unknown；wasm-bindgen-cli 版本
+      与 Cargo.lock 严格一致（脚本自检）。
 """
 
 import argparse
@@ -28,37 +24,30 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 TARGET_DIR = ROOT / "target" / "wasm32-unknown-unknown" / "release" / "examples"
-# Web CJK 字体源（fetch 预载用：testhost 的 preload_cjk 经 starfish_io::read
-# 走 fetch "fonts/cjk.ttf"——ZhaoHua：5.1MB / 6767 CJK 字形）
+PACK_DIR = ROOT / "pack"
 CJK_FONT_SRC = ROOT / "resources" / "ZhaoHua.ttf"
 
-# 注册清单：名 →（是否窗口类，页面标题说明）
-REGISTRY = {
-    "binding_probe": (True, "M1 绑定面探针：标准 pygame 写法（原生 pygame 模块 + with 会话渲染；Rect 直通 + typed K_* + font + mixer）"),
-    "sig_probe": (False, "签名契约锚点：52 项可执行规格（结果在浏览器 F12 控制台）"),
-    "rp_hello": (False, "M0 嵌入冒烟：RP 创世纪 / 语言特性 / 冻结 stdlib（结果在浏览器 F12 控制台）"),
-    "font_test": (True, "pygame.font 专项测试：构造族/度量/render 一等化/CJK 链路逐项断言 + 字体样张（[font-test] 行）"),
-    "transparent_test": (True, "透明窗口专项验证：桌宠形态基座（TRANSPARENT 创建 + 透明合成 + set_opacity 呼吸；[transparent-test] 行）"),
-    "draw_test": (True, "pygame.draw 专项测试：六形状 × 填充/描边 × 颜色形态 × 半透明 + gfxdraw 兼容混绘（[draw-test] 行）"),
-    "rapier_test": (True, "pygame_physics 2D 专项：落体调试线叠加通道（正交相机，[rapier-test] 行）"),
-    "rapier3d_test": (True, "pygame_physics 3D 专项：3D 落体调试线（look-at 透视相机 + 深度通道，[rapier3d-test] 行）"),
-    "egui_test": (True, "pygame_gui 专项：OOP 门面 HUD + 词汇 v2 控件（[egui-test] 行）"),
-    "pip_test": (True, "画中画/游戏内面板：Surface 会话客人叠加（3D 物理动画 + 内嵌面板，[pip-test] 行）"),
-    "surf_probe": (True, "Surface 链路五象限探针：纯 fill / 2D 形状 / 深度面 / 2D 调试线 / 3D 调试线离屏逐项验证（[surf-probe] 行；须 --features physics3d）"),
-    "parity_test": (True, "绑定收官 parity：颜色表/色彩空间/mixer Channel+Effect/深度会话（[parity-test] 行）"),
-    "blit_transform_demo": (True, "blit_transform 单接口收拢：上半 2D 仿射三联（旋转/缩放/镜像 + 烘焙对照），下半透视相机 + 模型矩阵空间放置（近大远小，[blit-demo] 行）"),
-    "custom_pipeline_demo": (True, "自建 WGSL 管线 + raw_render 直绘：access 资源链（Shader/Mesh/BindGroup/Pipeline）+ 全局相机定约 + time 呼吸渐变 quad（[cp-demo] 行）"),
-}
+WEB_TEMPLATE = """# Web 打包配置（build_web.py --init 生成；可直接改）
+[app]
+name = "{name}"                # 案例名（examples/<name>.py + .rs）
+windowed = true                 # true = canvas 窗口页 / false = 控制台页
+caption = "{name}"             # 页面说明行
 
-# 特例 features（缺省 = default features：gui + physics2d）
-FEATURES = {
-    "rapier3d_test": "physics3d",
-    "pip_test": "physics3d",
-    "surf_probe": "physics3d",
-}
+[build]
+features = []                   # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）
+"""
+
 
 CANVAS_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -240,63 +229,85 @@ def check_bindgen_version():
                  f"cargo install wasm-bindgen-cli --version {lock_ver}")
 
 
-def build_one(name, windowed, build_ts):
-    caption = REGISTRY[name][1]
-    print(f"=== 构建 {name}（{'canvas' if windowed else 'console'}）===")
-    feats = FEATURES.get(name)
-    feat_args = ["--features", feats] if feats else []
-    sh(["cargo", "build", "--release", "--target", "wasm32-unknown-unknown",
-        "--example", name, *feat_args])
-    wasm = TARGET_DIR / f"{name}.wasm"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pack_common import load_cfg
+
+
+def load_toml(path: Path) -> dict:
+    return load_cfg(path)
+
+
+def build_one(name, build_ts):
+    toml = PACK_DIR / f'{name}.web.toml'
+    if not toml.is_file():
+        sys.exit(f'[FAIL] 未找到 {toml}（先 --init {name}）')
+    cfg = load_toml(toml)
+    app = cfg.get('app', {})
+    windowed = app.get('windowed', True)
+    caption = app.get('caption', name)
+    feats = cfg.get('build', {}).get('features', [])
+    kind = 'canvas' if windowed else 'console'
+    print(f"=== 构建 {name}（{kind}）===")
+    feat_args = ['--features', ','.join(feats)] if feats else []
+    sh(['cargo', 'build', '--release', '--target', 'wasm32-unknown-unknown',
+        '--example', name, *feat_args])
+    wasm = TARGET_DIR / f'{name}.wasm'
     if not wasm.is_file():
-        sys.exit(f"[FAIL] wasm 产物缺失: {wasm}")
-    sh(["wasm-bindgen", "--out-dir", str(WEB), "--target", "web", str(wasm)])
+        sys.exit(f'[FAIL] wasm 产物缺失: {wasm}')
+    sh(['wasm-bindgen', '--out-dir', str(WEB), '--target', 'web', str(wasm)])
 
     tpl = CANVAS_TEMPLATE if windowed else CONSOLE_TEMPLATE
-    (WEB / f"{name}.html").write_text(
-        tpl.format(name=name, caption=caption, build_ts=build_ts), encoding="utf-8")
+    (WEB / f'{name}.html').write_text(
+        tpl.format(name=name, caption=caption, build_ts=build_ts), encoding='utf-8')
     print(f"[OK] web/{name}.html + 胶水 + wasm\n")
 
 
 def main():
-    ap = argparse.ArgumentParser(description="pygame-rs Web 构建脚本")
-    ap.add_argument("names", nargs="*", help="示例名（见 REGISTRY）")
-    ap.add_argument("--all", action="store_true", help="构建清单内全部示例")
-    ap.add_argument("--console", action="store_true",
-                    help="覆盖：按控制台页生成（默认按 REGISTRY 的窗口/控制台分类）")
+    ap = argparse.ArgumentParser(description='pygame-rs Web 构建（toml 驱动）')
+    ap.add_argument('names', nargs='*', help='案例名（pack/<名>.web.toml）')
+    ap.add_argument('--all', action='store_true', help='构建 pack/*.web.toml 全部')
+    ap.add_argument('--init', metavar='名', help='生成 pack/<名>.web.toml 模板')
     args = ap.parse_args()
 
-    names = list(REGISTRY) if args.all else args.names
+    if args.init:
+        PACK_DIR.mkdir(exist_ok=True)
+        t = PACK_DIR / f'{args.init}.web.toml'
+        if t.exists():
+            sys.exit(f'[FAIL] 已存在: {t}')
+        t.write_text(WEB_TEMPLATE.format(name=args.init), encoding='utf-8')
+        print(f'[OK] 模板已生成: {t}（改完直接 python build_web.py {args.init}）')
+        return
+
+    if args.all:
+        names = [p.name.removesuffix('.web.toml')
+                 for p in sorted(PACK_DIR.glob('*.web.toml'))]
+    else:
+        names = args.names
     if not names:
-        ap.error("未指定示例名（可选：" + ", ".join(REGISTRY) + " 或 --all）")
-    for n in names:
-        if n not in REGISTRY:
-            sys.exit(f"[FAIL] 未注册的示例: {n}（如需新增，往 REGISTRY 加一行）")
+        ap.error('未指定案例名（或用 --all 打包 pack/*.web.toml 全部）')
 
     WEB.mkdir(parents=True, exist_ok=True)
-    # CJK 字体部署（fetch 预载目标 fonts/cjk.ttf；存在即跳过——
-    # 5MB 字体不必每次重拷）
-    fonts_dir = WEB / "fonts"
+    # CJK 字体部署（存在即跳过；全案例共享一份）
+    fonts_dir = WEB / 'fonts'
     fonts_dir.mkdir(exist_ok=True)
-    cjk_dst = fonts_dir / "cjk.ttf"
+    cjk_dst = fonts_dir / 'cjk.ttf'
     if not cjk_dst.is_file():
         if CJK_FONT_SRC.is_file():
             shutil.copy2(CJK_FONT_SRC, cjk_dst)
-            print(f"[OK] CJK 字体部署: web/fonts/cjk.ttf（{cjk_dst.stat().st_size // 1048576}MB）")
+            print(f'[OK] CJK 字体部署: web/fonts/cjk.ttf')
         else:
-            print("[WARN] CJK 字体源缺失（resources/ZhaoHua.ttf）——Web 中文将缺字")
+            print('[WARN] CJK 字体源缺失（resources/ZhaoHua.ttf）——Web 中文将缺字')
     check_bindgen_version()
     from datetime import datetime
-    build_ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    build_ts = datetime.now().strftime('%Y%m%d%H%M%S')
     for n in names:
-        windowed = not args.console if args.console else REGISTRY[n][0]
-        build_one(n, windowed, build_ts)
+        build_one(n, build_ts)
 
-    print("=== 测试方式 ===")
-    print(f"cd {WEB}")
-    print("python -m http.server 8000")
-    print("浏览器打开 http://localhost:8000/<名>.html（file:// 无效）")
+    print('=== 测试方式 ===')
+    print(f'cd {WEB}')
+    print('python -m http.server 8000')
+    print('浏览器打开 http://localhost:8000/<名>.html（file:// 无效）')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

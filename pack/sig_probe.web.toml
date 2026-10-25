@@ -1,0 +1,11 @@
+# Web 打包配置（build_web.py --init 生成）
+[app]
+name = "sig_probe"
+windowed = false               # true = canvas 窗口页 / false = 控制台页
+caption = "签名契约锚点：52 项可执行规格（结果在浏览器 F12 控制台）"
+
+[build]
+features = []              # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）

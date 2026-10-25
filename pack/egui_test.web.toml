@@ -1,0 +1,11 @@
+# Web 打包配置（build_web.py --init 生成）
+[app]
+name = "egui_test"
+windowed = true               # true = canvas 窗口页 / false = 控制台页
+caption = "pygame_gui 专项：OOP 门面 HUD + 词汇 v2 控件（[egui-test] 行）"
+
+[build]
+features = []              # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）

@@ -1,0 +1,11 @@
+# Web 打包配置（build_web.py --init 生成）
+[app]
+name = "blit_transform_demo"
+windowed = true               # true = canvas 窗口页 / false = 控制台页
+caption = "blit_transform 单接口收拢：上半 2D 仿射三联（旋转/缩放/镜像 + 烘焙对照），下半透视相机 + 模型矩阵空间放置（近大远小，[blit-demo] 行）"
+
+[build]
+features = []              # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）

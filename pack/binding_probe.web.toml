@@ -1,0 +1,11 @@
+# Web 打包配置（build_web.py --init 生成）
+[app]
+name = "binding_probe"
+windowed = true               # true = canvas 窗口页 / false = 控制台页
+caption = "M1 绑定面探针：标准 pygame 写法（原生 pygame 模块 + with 会话渲染；Rect 直通 + typed K_* + font + mixer）"
+
+[build]
+features = []              # cargo features（physics3d 等）
+
+[assets]
+fonts = ["resources/ZhaoHua.ttf:fonts/cjk.ttf"]   # CJK 字体部署（源:目标）
