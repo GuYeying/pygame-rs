@@ -164,3 +164,6 @@ name = "egui_test_android"
 path = "examples/egui_test.rs"
 crate-type = ["cdylib"]
 required-features = ["gui"]
+
+[[example]]
+name = "surf_probe"
