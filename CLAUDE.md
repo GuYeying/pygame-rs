@@ -693,3 +693,25 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - **已知遗留**：Web 上 Python `print()` 输出丢失（Rust dlog 正常、
     Python stdout 桥断——此前全案例死于字体加载故从未暴露；pip_test
     的 [pip-test] 断言行在 F12 不可见，功能不受影响），排查立项另批。
+
+- **批次 51（2026-10-24）：3D 调试线"从未显示"根因修复（客人叠加深度自清）**：
+  - **现象**：`draw_debug_3d` 的 3D 调试线在**主屏与 Surface、桌面与
+    Web 从未真正显示过**（历次"验收"实为截图判读被提示性提问误导；
+    surf_probe 五象限盲验 + 用户 A/B 实验（主屏改离屏即消失）定位）；
+    2D 调试线（draw_debug）正常；
+  - **根因**：`OverlayCtx::with_pass(depth=true)` 的深度附件 Load 承接
+    宿主深度——但宿主深度存在"从不清理"常态（**主屏 present 走
+    pack(false) 不带 PassDepth**，深度纹理 undefined 被 wgpu 零初始化
+    跟踪清为 0.0 = 最近平面）→ 3D 线（深度 ≈0.99）全被深度测试无声
+    剔除。Surface 版 pack 虽清深度但同样受 overlay Load 语义影响；
+  - **修复**（starfish e1064b7）：with_pass(depth=true) 深度**恒
+    Clear(1.0)**——定约：客人叠加 = 恒在游戏内容之上、3D 客人自管
+    遮挡（LessEqual），不承接宿主深度；
+  - **surf_probe**（新案例，五象限链路探针）：① 纯 fill blit ② 2D
+    形状 ③ 深度面 fill ④ 2D 调试线离屏 ⑤ **3D 调试线离屏**——修复后
+    五象限全可见（盲验：无提示问法）；Web REGISTRY/FEATURES 注册；
+  - **方法论修正**：视觉验收一律**盲验**（"描述客观像素"而非"是否有
+    XX"），提示性提问会诱导图像模型顺着说有；
+  - **rapier3d_test 布局定稿**：主屏直渲（用户方案验证路径）+ 画布内
+    帧计数活体；Web 模板增 #raf RAF 计数 + webglcontextlost 探针
+    （CTX-LOST 红字直报）——"raf 跳+画布黑"三态判据供长跑诊断。

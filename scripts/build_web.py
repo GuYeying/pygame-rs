@@ -47,6 +47,7 @@ REGISTRY = {
     "rapier3d_test": (True, "pygame_physics 3D 专项：3D 落体调试线（look-at 透视相机 + 深度通道，[rapier3d-test] 行）"),
     "egui_test": (True, "pygame_gui 专项：OOP 门面 HUD + 词汇 v2 控件（[egui-test] 行）"),
     "pip_test": (True, "画中画/游戏内面板：Surface 会话客人叠加（3D 物理动画 + 内嵌面板，[pip-test] 行）"),
+    "surf_probe": (True, "Surface 链路五象限探针：纯 fill / 2D 形状 / 深度面 / 2D 调试线 / 3D 调试线离屏逐项验证（[surf-probe] 行；须 --features physics3d）"),
     "parity_test": (True, "绑定收官 parity：颜色表/色彩空间/mixer Channel+Effect/深度会话（[parity-test] 行）"),
 }
 
@@ -54,6 +55,7 @@ REGISTRY = {
 FEATURES = {
     "rapier3d_test": "physics3d",
     "pip_test": "physics3d",
+    "surf_probe": "physics3d",
 }
 
 CANVAS_TEMPLATE = """<!DOCTYPE html>
@@ -109,6 +111,20 @@ CANVAS_TEMPLATE = """<!DOCTYPE html>
   const tick = () => {{ n++; if ((n % 10) === 0) el.textContent = 'raf ' + n;
                        requestAnimationFrame(tick); }};
   requestAnimationFrame(tick);
+  // WebGL 上下文丢失探针：浏览器回收 GL 上下文（资源压力）时触发——
+  // 画布变黑而 RAF 仍活的"跑几分钟黑屏"现象的直接判据
+  const cv = document.getElementById('starfish-we');
+  cv.addEventListener('webglcontextlost', e => {{
+    e.preventDefault();
+    el.textContent = 'CTX-LOST @raf ' + n;
+    el.style.color = '#f66';
+    _wl.textContent += '[CTX-LOST] WebGL 上下文丢失 @raf ' + n + '\\n';
+    _wl.scrollTop = _wl.scrollHeight;
+  }}, false);
+  cv.addEventListener('webglcontextrestored', () => {{
+    el.style.color = '#6c6';
+    _wl.textContent += '[CTX-RESTORED] 上下文恢复（引擎侧无自动重建——须刷新）\\n';
+  }}, false);
 }})();
 
 // ── console 转写（先于 wasm 加载就位；glue 每次调用都查 console.* 属性）──
