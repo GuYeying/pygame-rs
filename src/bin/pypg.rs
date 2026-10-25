@@ -141,8 +141,15 @@ fn main() {
 }
 
 /// 游戏门（同 pygame-runner）：entry 文件 + async def main() 协程
-async fn run_game(dir: &str) {
-    let game_dir = std::path::PathBuf::from(dir);
+async fn run_game(arg: &str) {
+    let p = std::path::PathBuf::from(arg);
+    let (game_dir, default_entry) = if p.extension().and_then(|e| e.to_str()) == Some("py") {
+        // 单文件形态：父目录为游戏目录、文件名为入口
+        let dir = p.parent().map(|d| d.to_path_buf()).unwrap_or_default();
+        (dir, p.file_name().unwrap().to_string_lossy().to_string())
+    } else {
+        (p.clone(), "main.py".to_string())
+    };
     if !game_dir.is_dir() {
         eprintln!("[pypg] 游戏目录不存在: {}", game_dir.display());
         std::process::exit(1);
@@ -162,7 +169,7 @@ async fn run_game(dir: &str) {
                     .map(|v| v.trim().trim_matches(['"', '\'']).to_string())
             })
         })
-        .unwrap_or_else(|| "main.py".to_string());
+        .unwrap_or(default_entry);
     let script = std::fs::read_to_string(&entry).expect("读取入口文件失败");
     println!("[pypg] 入口 {entry}（{} 字节），启动", script.len());
     if let Err(e) = rpy::testhost::run(&script, "pypg_game", false).await {

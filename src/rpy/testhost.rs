@@ -64,7 +64,7 @@ fn net_log(msg: &str) {
 
 /// CJK 字体预载链（三平台；批次 G + Android 系统候选链——与
 /// binding_probe 保持一字不差，命中即 log）
-async fn preload_cjk(tag: &str) {
+pub async fn preload_cjk(tag: &str) {
     #[cfg(windows)]
     match std::fs::read("C:/Windows/Fonts/msyh.ttc") {
         Ok(b) => {
