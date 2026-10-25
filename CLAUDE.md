@@ -880,3 +880,22 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     compute pass 会话形态（with raw_compute()？）+ storage buffer 绑定
     + ComputePipeline 包装——按需开工，接口位 buffer(usage="storage")
     已预埋。
+- **批次 56（2026-10-25）：经典 Python traceback 报错输出（用户定夺
+  "这个很重要"）**：RustPython 行为优化第一期——
+  - `format_traceback(vm, exc)`（testhost）：RustPython 现成的
+    `vm.write_exception` 直通（py_io::IoWriter + Cursor 缓冲）——完整
+    经典格式：`Traceback (most recent call last)` → 逐帧
+    `File "xx.py", line N, in func` → `异常类型: 消息`（含
+    __cause__/__context__ 链）；三处异常出口（脚本执行/生成器创建/
+    帧循环）统一接入；
+  - **语法错误同格式**：compile 错误经 `VmCompileError::
+    into_pyexception(vm, source)` 转 SyntaxError 异常对象再走同一
+    格式化——输出 `File "xx.py", line 2` + 源码行 + `^` 列指示 +
+    `SyntaxError: ...`（与 CPython 完全一致；原 to_string 只有裸
+    消息如 "'(' was never closed"）；
+  - 验证：三层调用 NameError 实测输出完整栈（line 21 in game →
+    line 10 in middle → line 6 in inner）；回归 custom/blit
+    SUMMARY PASS；
+  - **下期立项**（用户定夺）：① 资源打包 = 打包脚本控制资源列表
+    （跨平台 io 已备，路径对齐即可——不做 asset:// 协议层）；
+    ② 桌面端抽象 python.exe 形态 + 移动端链接库两种导出方式设计。

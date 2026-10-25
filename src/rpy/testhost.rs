@@ -109,6 +109,22 @@ async fn preload_cjk(tag: &str) {
     }
 }
 
+/// 经典 Python traceback 格式化（RustPython `vm.write_exception` 直通：
+/// Traceback (most recent call last) → 逐帧 File/line/in func →
+/// 异常类型: 消息；含 __cause__/__context__ 链与 SyntaxError 行列）。
+/// 异常出口（脚本执行 / 生成器创建 / 帧循环）统一走这里。
+fn format_traceback(
+    vm: &rustpython_vm::VirtualMachine,
+    exc: &rustpython_vm::builtins::PyBaseExceptionRef,
+) -> String {
+    let mut buf = std::io::Cursor::new(Vec::<u8>::new());
+    let _ = vm.write_exception(
+        &mut rustpython_vm::py_io::IoWriter(&mut buf),
+        exc,
+    );
+    String::from_utf8_lossy(buf.get_ref()).trim_end().to_string()
+}
+
 /// 运行一个模块专项测试脚本（生成器门：脚本定义 `game()`，宿主持循环）
 ///
 /// - `script`：include 静态嵌入的 Python 脚本全文；
@@ -144,20 +160,24 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
             let scope = vm.new_scope_with_builtins();
             rpy::install_modules(vm);
             dlog(tag, "pygame 原生模块已注入");
-            let code = vm
-                .compile(
-                    script,
-                    rustpython_vm::compiler::Mode::Exec,
-                    format!("{tag}.py"),
-                )
-                .map_err(|e| e.to_string())?;
+            let code = match vm.compile(
+                script,
+                rustpython_vm::compiler::Mode::Exec,
+                format!("{tag}.py"),
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    // 语法错 → SyntaxError 异常对象（带文件/行列）→
+                    // 同一 traceback 格式化（CPython 一致的诊断输出）
+                    let exc = e.into_pyexception(vm, Some(script));
+                    return Err(format!(
+                        "脚本编译异常:\n{}",
+                        format_traceback(vm, &exc)
+                    ));
+                }
+            };
             if let Err(e) = vm.run_code_obj(code, scope.clone()) {
-                let obj: rustpython_vm::PyObjectRef = e.clone().into();
-                let msg = obj
-                    .repr(vm)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|_| format!("{e:?}"));
-                return Err(format!("脚本执行异常: {msg}"));
+                return Err(format!("脚本执行异常:\n{}", format_traceback(vm, &e)));
             }
             let game = scope
                 .globals
@@ -166,12 +186,10 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
             let genobj = match game.call((), vm) {
                 Ok(g) => g,
                 Err(e) => {
-                    let obj: rustpython_vm::PyObjectRef = e.clone().into();
-                    let msg = obj
-                        .repr(vm)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|_| format!("{e:?}"));
-                    return Err(format!("生成器创建异常: {msg}"));
+                    return Err(format!(
+                        "生成器创建异常:\n{}",
+                        format_traceback(vm, &e)
+                    ));
                 }
             };
             *gen_cell.borrow_mut() = Some(genobj);
@@ -206,17 +224,16 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
             match vm.call_method(genobj, "__next__", ()) {
                 Ok(_) => {} // yield：本帧逻辑完成
                 Err(exc) => {
-                    let obj: rustpython_vm::PyObjectRef = exc.clone().into();
-                    let msg = obj
-                        .repr(vm)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|_| format!("{exc:?}"));
                     // 生成器耗尽（StopIteration）= 脚本正常收尾，非异常
+                    let obj: rustpython_vm::PyObjectRef = exc.clone().into();
                     let cls = obj.class().name().to_string();
                     if cls == "StopIteration" {
                         dlog(tag, "脚本完成（生成器耗尽）");
                     } else {
-                        dlog(tag, &format!("脚本异常: {msg}"));
+                        dlog(
+                            tag,
+                            &format!("脚本异常:\n{}", format_traceback(vm, &exc)),
+                        );
                     }
                     done = true;
                 }
