@@ -4,11 +4,12 @@
 # 驱动同心波纹扩散——引擎内置绘制[fill/blit/draw]无法实现的逐像素
 # 效果，自定义 WGSL 的价值所在）。
 # ① access() 资源链：Shader/Mesh/BindGroup/Pipeline（安全收参）
-# ② 全局相机定约：group0/b0 = 64B 列主 mat4 MVP——raw_render(camera=
-#    buf) 会话托管：收口快照、回放时写 buf（同帧 2D/3D 相机来回切、
-#    多 raw 会话共享同一 buf 各自配对）
+# ② raw_render = 严格精细控制（**引擎不做相机兜底**）：相机 buffer
+#    用户全权管理——会话内 write_camera_mvp(buf) 即时写；同帧多
+#    raw 会话（2D/3D 相机切换）各持**独立 buf + 独立 bind**（布局
+#    同构共享 pipeline）。
 # ③ 同帧双会话：大圆盘（Auto2d 正交原位）+ 中央小圆盘（Manual 透视
-#    微缩）——同一 mesh 同一 buf 两相机，快照隔离的可视证明。
+#    微缩）。
 import pygame
 
 WGSL = """
@@ -79,11 +80,16 @@ def game():
         x0, y1, 0.0, 1.0, 1.0, 1.0, 1.0,
     ]
     mesh = ac.mesh("pos3color4", verts, label="demo_mesh")
-    cam_buf = ac.buffer(64, label="demo_camera")
+    # 双会话各持独立 buf + 独立 bind（布局同构——同一 pipeline 复用）
+    cam_buf = ac.buffer(64, label="cam_2d")
+    cam_buf3 = ac.buffer(64, label="cam_3d")
     time_buf = ac.buffer(16, label="demo_time")
     cam_bind = ac.bind_group(
         [(0, "uniform", cam_buf), (1, "uniform", time_buf)],
-        label="demo_bind")
+        label="bind_2d")
+    cam_bind3 = ac.bind_group(
+        [(0, "uniform", cam_buf3), (1, "uniform", time_buf)],
+        label="bind_3d")
     pipe = ac.pipeline(shader, mesh, [cam_bind], label="demo_pipeline")
 
     st("mesh 顶点数 6", mesh.vertex_count() == 6)
@@ -110,17 +116,20 @@ def game():
                    pygame.render.screen_attachment() is not None)
             t.fill((14, 15, 22))
             t.blit(title, (14, 10))
-            # ── 段 1：Auto2d 正交——大波纹圆盘（camera=cam_buf 托管）──
-            with t.raw_render(camera=cam_buf) as p:
+            # ── 段 1：Auto2d 正交——大波纹圆盘（buf1 即时写）──
+            pygame.render.write_camera_mvp(cam_buf)
+            with t.raw_render() as p:
                 p.set_pipeline(pipe)
                 p.set_bind_group(0, cam_bind)
                 p.set_mesh(mesh)
                 p.draw(0, 6)
-            # ── 段 2：切 3D 透视——同一 mesh 同一 buf，会话快照隔离 ──
+            # ── 段 2：3D 透视——同一 mesh，独立 buf3/bind3（用户自管：
+            #    set 后即时写；回放时各自 buf 无人再动 → 配对正确）──
             pygame.render.set_camera(cam3d)
-            with t.raw_render(camera=cam_buf) as p:
+            pygame.render.write_camera_mvp(cam_buf3)
+            with t.raw_render() as p:
                 p.set_pipeline(pipe)
-                p.set_bind_group(0, cam_bind)
+                p.set_bind_group(0, cam_bind3)
                 p.set_mesh(mesh)
                 p.draw(0, 6)
             pygame.render.reset_camera()

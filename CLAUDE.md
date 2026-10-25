@@ -837,3 +837,10 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   custom_pipeline_demo 升级双会话验证：同一 mesh 同一 cam_buf 同帧
   正交/透视两相机——盲验下半原位 quad（500×230）+ 中央微缩 quad
   （340×160）同屏可辨。
+- **批次 54 补 2（2026-10-25，用户定夺）**：raw_render 相机托管撤销——
+  **raw_render = 严格精细控制，引擎不做相机兜底**（全局相机的隐式处理
+  只服务 `with render()` 批绘制）：`raw_render(camera=buf)` 参数移除，
+  相机 buffer 用户全权管理——会话内 `write_camera_mvp(buf)` 即时写；
+  同帧多 raw 会话（2D/3D 相机切换）**各持独立 buf + 独立 bind**（布局
+  同构共享同一 pipeline）；共享同一 buf 会被后写覆盖（回放延迟性，
+  文档明示）。demo 改正解示范（双 buf 双 bind，盲验双盘正确）。
