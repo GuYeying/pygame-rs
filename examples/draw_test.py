@@ -6,7 +6,7 @@
 import pygame
 
 
-def game():
+def main():
     screen = pygame.display.set_mode((800, 600))
     font = pygame.font.Font(None, 20)
     cjk = pygame.font.Font("cjk", 20)

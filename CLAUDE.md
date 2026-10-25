@@ -933,3 +933,21 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - 验证：名字直打（toml 已删→自动生成+打包 ✓）、games/mini_game
     路径形态（自动生成 toml + dist 组装 + runner 实跑中文标题 ✓）、
     web 对 games 形态报错指路 ✓。
+- **批次 59（2026-10-25，用户定夺两轮）：入口严格化 + 协程形态**：
+  - **严格 `main()` 入口**（弃自动探测/顶层直写）：脚本必须定义
+    `def main():`（生成器，帧体 yield）**或 `async def main():`（协程，
+    帧体 `await pygame.next_frame()`）**——Web rAF 硬约束下的跨平台
+    统一形态；存量 13 案例的 `def game():` 全量迁移 `def main():`；
+  - **协程驱动**（async main——为将来 `await` 网络 IO 不卡帧铺路；
+    net 已备非阻塞轮询，真 awaitable 后续接入）：testhost 帧桥注入
+    （`pygame.next_frame()` 返回 _FrameAwait，`__await__` yield "frame"
+    ——纯 Python 层桥零 Rust async 桥接）；主循环双驱动（coroutine
+    send(None) / generator __next__，对宿主等价——yield 或 await 帧桥
+    挂起即本帧完成）；
+  - **入口文件可配置**：toml `[app] entry = "main.py"`（缺省）；
+    build_windows 拷入口为 dist/<entry> + 写 dist/game.toml 运行清单；
+    runner 读 game.toml 的 entry 先加载（路径 absolutize 先于 cwd
+    切换——相对 join 二次解析坑）；
+  - games/async_demo（协程活示例：async def main + await next_frame，
+    runner 实跑绿字+矩形帧动画验证）；回归 custom/blit（生成器入口）
+    SUMMARY PASS。

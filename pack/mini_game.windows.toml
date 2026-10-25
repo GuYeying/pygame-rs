@@ -1,6 +1,7 @@
 # 桌面 Windows 打包配置（build_windows.py --init 生成；可直接改）
 [app]
 name = "mini_game"                # 案例名（examples/<name>.py 为游戏源码）
+entry = "main.py"             # 入口文件（dist 内文件名；内须 def main()）
 title = "mini_game"               # 分发名（dist 目录与 zip 名）
 
 [build]

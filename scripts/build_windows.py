@@ -52,6 +52,7 @@ TEMPLATE = """\
 # 桌面 Windows 打包配置（build_windows.py --init 生成；可直接改）
 [app]
 name = "{name}"                # 案例名（examples/<name>.py 为游戏源码）
+entry = "main.py"             # 入口文件（dist 内文件名；内须 def main()）
 title = "{name}"               # 分发名（dist 目录与 zip 名）
 
 [build]
@@ -115,6 +116,7 @@ def build_one(toml_path: Path, main_py: Path) -> None:
     title = cfg.get("app", {}).get("title", name)
     features = cfg.get("build", {}).get("features", [])
     assets = cfg.get("assets", {})
+    entry = cfg.get("app", {}).get("entry") or "main.py"
 
     src_py = main_py
     if not src_py.is_file():
@@ -135,7 +137,10 @@ def build_one(toml_path: Path, main_py: Path) -> None:
         shutil.rmtree(out)
     out.mkdir(parents=True)
     shutil.copy2(runner, out / "pygame-runner.exe")
-    shutil.copy2(src_py, out / "main.py")
+    shutil.copy2(src_py, out / entry)
+    # dist 运行清单：runner 按此加载入口（entry 语义的运行侧落点）
+    manifest = f"[app]\nname = {name!r}\nentry = {entry!r}\n"
+    (out / "game.toml").write_text(manifest, encoding="utf-8")
     copy_pairs(assets.get("fonts", []), out)
     copy_globs(assets.get("include", []), out)
 

@@ -179,21 +179,54 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
             if let Err(e) = vm.run_code_obj(code, scope.clone()) {
                 return Err(format!("脚本执行异常:\n{}", format_traceback(vm, &e)));
             }
-            let game = scope
-                .globals
-                .get_item("game", vm)
-                .map_err(|e| format!("{e:?}"))?;
-            let genobj = match game.call((), vm) {
+            // ── 入口约束（产品化批次 58 定稿，用户定夺）：严格
+            // `main()`（跨平台统一——Web rAF 模型下帧驱动必须让出
+            // JS 栈，函数包裹是硬约束；桌面同形态零分叉）。
+            // **双形态**（同批追加强制约）：`def main(): ... yield`
+            //（生成器）或 `async def main(): ... await pygame.
+            // next_frame()`（协程——为将来网络 await 不卡帧铺路；
+            // 帧桥 awaitable 在此注入）。无 main = 书写错误。
+            let frame_bridge = r#"
+class _FrameAwait:
+    def __await__(self):
+        yield "frame"
+_next_frame_state = _FrameAwait()
+def next_frame():
+    return _next_frame_state
+"#;
+            let bridge_code = vm
+                .compile(
+                    frame_bridge,
+                    rustpython_vm::compiler::Mode::Exec,
+                    "<frame_bridge>".to_string(),
+                )
+                .map_err(|e| format!("帧桥编译失败: {e}"))?;
+            if let Err(e) = vm.run_code_obj(bridge_code, scope.clone()) {
+                return Err(format!("帧桥注入失败: {e:?}"));
+            }
+            // pygame.next_frame 挂载（帧桥函数 → pygame 模块属性）
+            if let (Ok(pg), Ok(nf)) = (
+                vm.import("pygame", 0),
+                scope.globals.get_item("next_frame", vm),
+            ) {
+                let _ = pg.set_attr("next_frame", nf, vm);
+            }
+            let entry = scope.globals.get_item("main", vm).map_err(|_| {
+                "入口缺失：脚本须定义 `def main():`（生成器，帧体 yield）\
+                 或 `async def main():`（协程，帧体 await pygame.next_frame()）"
+                    .to_string()
+            })?;
+            let genobj = match entry.call((), vm) {
                 Ok(g) => g,
                 Err(e) => {
                     return Err(format!(
-                        "生成器创建异常:\n{}",
+                        "入口 main() 调用异常:\n{}",
                         format_traceback(vm, &e)
                     ));
                 }
             };
             *gen_cell.borrow_mut() = Some(genobj);
-            dlog(tag, "generator created");
+            dlog(tag, "main() 入口已建（生成器/协程双形态）");
             Ok(())
         };
         if let Err(msg) = run() {
@@ -217,18 +250,28 @@ pub async fn run(script: &str, tag: &str, transparent: bool) -> Result<(), Box<d
         let mut done = false;
         interp.enter(|vm| {
             let borrowed = gen_cell.borrow();
-            let Some(genobj) = borrowed.as_ref() else {
+            let Some(entry_obj) = borrowed.as_ref() else {
                 done = true;
                 return;
             };
-            match vm.call_method(genobj, "__next__", ()) {
-                Ok(_) => {} // yield：本帧逻辑完成
+            // 双形态驱动：协程（async def main）用 send(None) 步进
+            //（await 帧桥 yield "frame" = 本帧完成）；生成器（def
+            // main）用 __next__（yield = 本帧完成）——对宿主等价。
+            let cls = entry_obj.class().name().to_string();
+            let step = if cls == "coroutine" {
+                vm.call_method(entry_obj, "send", (vm.ctx.none.clone(),))
+                    .map(|_| ())
+            } else {
+                vm.call_method(entry_obj, "__next__", ()).map(|_| ())
+            };
+            match step {
+                Ok(()) => {} // 本帧逻辑完成（yield / await 帧桥挂起）
                 Err(exc) => {
-                    // 生成器耗尽（StopIteration）= 脚本正常收尾，非异常
+                    // 生成器/协程耗尽（StopIteration）= 正常收尾，非异常
                     let obj: rustpython_vm::PyObjectRef = exc.clone().into();
-                    let cls = obj.class().name().to_string();
-                    if cls == "StopIteration" {
-                        dlog(tag, "脚本完成（生成器耗尽）");
+                    let exc_cls = obj.class().name().to_string();
+                    if exc_cls == "StopIteration" {
+                        dlog(tag, "脚本完成（入口耗尽）");
                     } else {
                         dlog(
                             tag,

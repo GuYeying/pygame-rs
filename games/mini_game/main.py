@@ -1,7 +1,7 @@
 import pygame
 
 
-def game():
+def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 24)
     title = cjk.render("games/ mini_game - runner OK", True, (120, 220, 120))

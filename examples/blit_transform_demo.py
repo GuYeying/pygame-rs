@@ -9,7 +9,7 @@
 import pygame
 
 
-def game():
+def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 17)
     title = cjk.render(

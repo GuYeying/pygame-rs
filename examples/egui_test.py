@@ -57,7 +57,7 @@ class HUD(egui.UiBase):
         ui.label(f"游戏画面 {self.game['size'][0]}x{self.game['size'][1]}")
 
 
-def game():
+def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 20)
     game_state = {"size": [800, 600]}

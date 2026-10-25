@@ -4,7 +4,7 @@
 import pygame
 
 
-def game():
+def main():
     # flags 落地验证（批次 O 扩展）：尺寸跟随 + 可调整大小
     screen = pygame.display.set_mode((1000, 700), pygame.display.RESIZABLE)
     _fail = []

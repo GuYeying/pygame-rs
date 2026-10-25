@@ -1,7 +1,8 @@
 # 桌面 Windows 打包配置（build_windows.py --init 生成；可直接改）
 [app]
-name = "blit_transform_demo"                # 案例名（examples/<name>.py 为游戏源码）
-title = "blit_transform_demo"               # 分发名（dist 目录与 zip 名）
+name = "async_demo"                # 案例名（examples/<name>.py 为游戏源码）
+entry = "main.py"             # 入口文件（dist 内文件名；内须 def main()）
+title = "async_demo"               # 分发名（dist 目录与 zip 名）
 
 [build]
 mode = "release"               # RustPython 铁律：恒 release（勿改）
