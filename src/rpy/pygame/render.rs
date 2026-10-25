@@ -293,6 +293,20 @@ pub(crate) mod render {
         size: u64,
         #[pyarg(any, optional)]
         label: Option<String>,
+        /// usage = "uniform"（默认）| "indirect" | "storage"
+        #[pyarg(any, optional)]
+        usage: Option<String>,
+    }
+
+    /// access.update_mesh(mesh, vertices, indices=None)
+    #[derive(FromArgs)]
+    pub(crate) struct UpdateMeshArgs {
+        #[pyarg(any)]
+        mesh: PyRef<PyMesh>,
+        #[pyarg(any)]
+        vertices: PyObjectRef,
+        #[pyarg(any, optional)]
+        indices: Option<PyObjectRef>,
     }
 
     /// access.mesh(layout, vertices, indices=None, label=None)
@@ -387,13 +401,23 @@ pub(crate) mod render {
         /// buffer(size, label=None) -> Buffer：raw uniform 缓冲（字节自管
         /// ——自定义 struct 语义；相机定约 64B）。write 经本类 write_buffer。
         #[pymethod]
-        fn buffer(&self, args: BufferArgs, vm: &VirtualMachine) -> PyRef<PyBuffer> {
+        fn buffer(&self, args: BufferArgs, vm: &VirtualMachine) -> PyResult<PyRef<PyBuffer>> {
+            let usage = match args.usage.as_deref().unwrap_or("uniform") {
+                "uniform" => wgpu::BufferUsages::UNIFORM,
+                "indirect" => wgpu::BufferUsages::INDIRECT,
+                "storage" => wgpu::BufferUsages::STORAGE,
+                other => {
+                    return Err(vm.new_value_error(format!(
+                        "usage 须为 uniform/indirect/storage，实际 {other:?}"
+                    )))
+                }
+            } | wgpu::BufferUsages::COPY_DST;
             let b = self.access.create_raw_buffer(
                 args.label.as_deref().or(Some("py_render_buffer")),
                 args.size,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage,
             );
-            PyBuffer { inner: b, size: args.size }.into_ref(&vm.ctx)
+            Ok(PyBuffer { inner: b, size: args.size }.into_ref(&vm.ctx))
         }
 
         /// mesh(layout, vertices, indices=None, label=None) -> Mesh：
@@ -569,6 +593,58 @@ pub(crate) mod render {
             self.access.write_buffer(&buf.inner, 0, &bytes);
             Ok(())
         }
+
+        /// write_buffer_u32(buf, ints)：u32 列表 → LE bytes（indirect
+        /// 绘制参数等整数语义数据的写入口）
+        #[pymethod]
+        fn write_buffer_u32(
+            &self,
+            buf: PyRef<PyBuffer>,
+            ints: PyObjectRef,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            let vals: Vec<u32> = vm.extract_elements_with(&ints, |o| {
+                u32::try_from_object(vm, o.to_owned())
+            })?;
+            let bytes: Vec<u8> =
+                vals.iter().flat_map(|v| v.to_le_bytes()).collect();
+            self.access.write_buffer(&buf.inner, 0, &bytes);
+            Ok(())
+        }
+
+        /// update_mesh(mesh, vertices, indices=None)：**动态几何**——
+        /// 顶点（/索引）字节就地更新，免每帧重建 mesh（粒子/变形路径）。
+        /// ⚠️ 容量以建时为准：顶点数不得超过 mesh() 建时的数量
+        ///（超出 = wgpu 越界校验错；更大容量请重建）。
+        #[pymethod]
+        fn update_mesh(
+            &self,
+            args: UpdateMeshArgs,
+            vm: &VirtualMachine,
+        ) -> PyResult<()> {
+            let bytes = floats_to_bytes(&args.vertices, vm)?;
+            self.access.write_vertex_buffer(&args.mesh.inner, &bytes);
+            if let Some(idx) = args.indices {
+                let idx: Vec<i64> =
+                    vm.extract_elements_with(&idx, |o| {
+                        i64::try_from_object(vm, o.to_owned())
+                    })?;
+                let mut u16s = Vec::with_capacity(idx.len());
+                for i in idx {
+                    u16s.push(u16::try_from(i).map_err(|_| {
+                        vm.new_value_error(format!("索引越界（0..=65535）：{i}"))
+                    })?);
+                }
+                let bytes: Vec<u8> =
+                    u16s.iter().flat_map(|v| v.to_le_bytes()).collect();
+                self.access
+                    .write_index_buffer(&args.mesh.inner, &bytes)
+                    .map_err(|e| {
+                        vm.new_value_error(format!("索引缓冲更新失败：{e:?}"))
+                    })?;
+            }
+            Ok(())
+        }
     }
 
     // ── 资源句柄（access.* 产物；透明句柄——wgpu 对象不出 Python 界）──
@@ -616,6 +692,12 @@ pub(crate) mod render {
         #[pymethod]
         fn index_count(&self) -> u32 {
             self.inner.index_count()
+        }
+
+        /// has_index_buffer() -> bool
+        #[pymethod]
+        fn has_index_buffer(&self) -> bool {
+            self.inner.has_index_buffer()
         }
     }
 
@@ -712,8 +794,21 @@ pub(crate) mod render {
         Mesh(PyRef<PyMesh>),
         Draw(u32, u32),
         DrawIndexed(u32, u32),
+        /// 全量绘制（set_mesh + 按自身计数——免手填顶点范围）
+        DrawMesh(PyRef<PyMesh>),
         Scissor(u32, u32, u32, u32),
         Viewport(f32, f32, f32, f32, f32, f32),
+        /// 模板动态状态（管线开 stencil 面时）
+        StencilRef(u32),
+        /// 混合动态常量（blend 用 Constant 因子时）
+        BlendConstant(f64, f64, f64, f64),
+        /// 调试标注（RenderDoc/Nsight 捕获时可见）
+        PushDebugGroup(String),
+        PopDebugGroup,
+        DebugMarker(String),
+        /// indirect 绘制（范围参数在 buffer 内：u32 序列）
+        DrawIndirect(PyRef<PyBuffer>, u64),
+        DrawIndexedIndirect(PyRef<PyBuffer>, u64),
     }
 
     /// raw_render 直绘会话（`with t.raw_render(depth=False) as p:`
@@ -759,11 +854,30 @@ pub(crate) mod render {
                             RawCmd::DrawIndexed(a, b) => {
                                 pass.draw_indexed(*a..*b, 0, 0..1)
                             }
+                            RawCmd::DrawMesh(m) => pass.draw_mesh(&m.inner),
                             RawCmd::Scissor(x, y, w, h) => {
                                 pass.set_scissor_rect(*x, *y, *w, *h)
                             }
                             RawCmd::Viewport(x, y, w, h, n, f) => {
                                 pass.set_viewport(*x, *y, *w, *h, *n, *f)
+                            }
+                            RawCmd::StencilRef(v) => pass.set_stencil_reference(*v),
+                            RawCmd::BlendConstant(r, g, b, a) => {
+                                pass.set_blend_constant(wgpu::Color {
+                                    r: *r,
+                                    g: *g,
+                                    b: *b,
+                                    a: *a,
+                                })
+                            }
+                            RawCmd::PushDebugGroup(l) => pass.push_debug_group(l),
+                            RawCmd::PopDebugGroup => pass.pop_debug_group(),
+                            RawCmd::DebugMarker(l) => pass.insert_debug_marker(l),
+                            RawCmd::DrawIndirect(buf, off) => {
+                                pass.draw_indirect(&buf.inner, *off)
+                            }
+                            RawCmd::DrawIndexedIndirect(buf, off) => {
+                                pass.draw_indexed_indirect(&buf.inner, *off)
                             }
                         }
                     }
@@ -823,6 +937,68 @@ pub(crate) mod render {
             self.cmds
                 .borrow_mut()
                 .push(RawCmd::Viewport(x, y, w, h, min_d, max_d));
+        }
+
+        /// draw_mesh(mesh)：全量绘制（自动 set_mesh + 按自身顶点/索引
+        /// 计数——免手填范围；set_mesh+draw 的便利形态）
+        #[pymethod]
+        fn draw_mesh(&self, mesh: PyRef<PyMesh>) {
+            self.cmds.borrow_mut().push(RawCmd::DrawMesh(mesh));
+        }
+
+        /// set_stencil_reference(value)：模板动态参考值（管线开
+        /// stencil 面时的 per-draw 动态状态）
+        #[pymethod]
+        fn set_stencil_reference(&self, value: u32) {
+            self.cmds.borrow_mut().push(RawCmd::StencilRef(value));
+        }
+
+        /// set_blend_constant(r, g, b, a)：混合动态常量（blend 因子
+        /// 用 Constant/OneMinusConstant 时）
+        #[pymethod]
+        fn set_blend_constant(&self, r: f64, g: f64, b: f64, a: f64) {
+            self.cmds
+                .borrow_mut()
+                .push(RawCmd::BlendConstant(r, g, b, a));
+        }
+
+        /// push_debug_group(label)：调试组开（RenderDoc/Nsight 捕获
+        /// 时的命令分组标注）
+        #[pymethod]
+        fn push_debug_group(&self, label: String) {
+            self.cmds.borrow_mut().push(RawCmd::PushDebugGroup(label));
+        }
+
+        /// pop_debug_group()：调试组闭
+        #[pymethod]
+        fn pop_debug_group(&self) {
+            self.cmds.borrow_mut().push(RawCmd::PopDebugGroup);
+        }
+
+        /// insert_debug_marker(label)：单点调试标注
+        #[pymethod]
+        fn insert_debug_marker(&self, label: String) {
+            self.cmds.borrow_mut().push(RawCmd::DebugMarker(label));
+        }
+
+        /// draw_indirect(buf, offset)：间接绘制——顶点/实例范围在
+        /// buffer 内（u32×4：vertex_count, instance_count, first_vertex,
+        /// first_instance；buffer 须 usage="indirect" 创建 + u32 写入）
+        #[pymethod]
+        fn draw_indirect(&self, buf: PyRef<PyBuffer>, offset: u64) {
+            self.cmds
+                .borrow_mut()
+                .push(RawCmd::DrawIndirect(buf, offset));
+        }
+
+        /// draw_indexed_indirect(buf, offset)：索引间接绘制（u32×5：
+        /// index_count, instance_count, first_index, base_vertex,
+        /// first_instance）
+        #[pymethod]
+        fn draw_indexed_indirect(&self, buf: PyRef<PyBuffer>, offset: u64) {
+            self.cmds
+                .borrow_mut()
+                .push(RawCmd::DrawIndexedIndirect(buf, offset));
         }
     }
 

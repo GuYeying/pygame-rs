@@ -860,3 +860,23 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   render()\` 批绘制的隐式默认相机**（Manual override），raw_render
   自管不参与；blit_transform_demo 回默认改显式
   set_default_camera(camera_ortho(...))（Manual 语义自管切换示范）。
+- **批次 55（2026-10-25，用户定夺）：raw_render/access 接口面对接补全**：
+  - **PyRawPass 新命令**（七项）：`draw_mesh(mesh)`（全量绘制免手填
+    顶点范围——用户点名）；`set_stencil_reference(v)` /
+    `set_blend_constant(r,g,b,a)`（动态状态——之前"低频不接"被否，
+    纯直通零风险全接）；`push_debug_group(label)` / `pop_debug_group()`
+    / `insert_debug_marker(label)`（RenderDoc/Nsight 调试标注）；
+    `draw_indirect(buf, offset)` / `draw_indexed_indirect(buf, offset)`
+    （间接绘制——范围参数在 u32 buffer 内）；
+  - **access 扩展**：`update_mesh(mesh, vertices, indices=None)`（动态
+    几何——顶点/索引就地更新免重建；容量以建时为准）；`buffer()`
+    增 usage 参数（"uniform" 默认 / "indirect" / "storage"）；
+    `write_buffer_u32(buf, ints)`（indirect 参数等整数数据写入口）；
+    `mesh.has_index_buffer()` 查询补齐；
+  - **验证**：demo 升级——段 1 走 draw_mesh + debug 标注 + 动态状态、
+    段 2 走 draw_indirect（u32 buffer）、每帧 update_mesh 写入路径
+    实测；SUMMARY PASS + 双盘视觉零回归；
+  - **compute shader 立项**（用户定夺"理论不难、暂无使用场景"）：
+    compute pass 会话形态（with raw_compute()？）+ storage buffer 绑定
+    + ComputePipeline 包装——按需开工，接口位 buffer(usage="storage")
+    已预埋。

@@ -83,6 +83,10 @@ def game():
     cam_buf = ac.buffer(64, label="cam_2d")
     cam_buf3 = ac.buffer(64, label="cam_3d")
     time_buf = ac.buffer(16, label="demo_time")
+    # indirect 绘制参数 buffer（u32×4：6 顶点 ×1 实例 从 0 起）——
+    # 段 2 经 draw_indirect 消费（与 draw_mesh 全量等价）
+    ind_buf = ac.buffer(16, label="draw_indirect", usage="indirect")
+    ac.write_buffer_u32(ind_buf, [6, 1, 0, 0])
     cam_bind = ac.bind_group(
         [(0, "uniform", cam_buf), (1, "uniform", time_buf)],
         label="bind_2d")
@@ -92,6 +96,7 @@ def game():
     pipe = ac.pipeline(shader, mesh, [cam_bind], label="demo_pipeline")
 
     st("mesh 顶点数 6", mesh.vertex_count() == 6)
+    st("mesh 无索引", mesh.index_count() == 0 and not mesh.has_index_buffer())
     st("screen_format 查询可用", len(pygame.render.screen_format()) > 0)
 
     frame = 0
@@ -124,6 +129,9 @@ def game():
             0.9, 800.0 / 600.0, 0.1, 2000.0).with_view(view3d)
 
         ac.write_buffer(time_buf, [t_sec])
+        # 动态几何写入路径验证（update_mesh 每帧就地更新——内容不变
+        # 零视觉风险；容量契约：顶点数 ≤ 建时数量）
+        ac.update_mesh(mesh, verts)
         # 自管相机：矩阵直写各自 buf（Mat4 特判；零全局相机参与）
         ac.write_buffer(cam_buf, cam_ortho.mvp())
         ac.write_buffer(cam_buf3, cam3d.mvp())
@@ -134,18 +142,24 @@ def game():
                    pygame.render.screen_attachment() is not None)
             t.fill((14, 15, 22))
             t.blit(title, (14, 10))
-            # ── 段 1：2D 正交（对照恒定）——大波纹圆盘 ──
+            # ── 段 1：2D 正交（对照恒定）——大波纹圆盘（draw_mesh 全量，
+            #    免手填顶点范围）+ debug 标注 + 动态状态命令 ──
             with t.raw_render() as p:
+                p.push_debug_group("ortho_disc")
                 p.set_pipeline(pipe)
                 p.set_bind_group(0, cam_bind)
-                p.set_mesh(mesh)
-                p.draw(0, 6)
-            # ── 段 2：3D 透视（动态验证）——同一 mesh，独立 buf3/bind3 ──
+                p.set_blend_constant(0.0, 0.0, 0.0, 0.0)
+                p.set_stencil_reference(0)
+                p.draw_mesh(mesh)
+                p.insert_debug_marker("ortho_disc_done")
+                p.pop_debug_group()
+            # ── 段 2：3D 透视（动态验证）——同一 mesh，独立 buf3/bind3；
+            #    draw_indirect 路径（范围参数在 u32 buffer 内）──
             with t.raw_render() as p:
                 p.set_pipeline(pipe)
                 p.set_bind_group(0, cam_bind3)
                 p.set_mesh(mesh)
-                p.draw(0, 6)
+                p.draw_indirect(ind_buf, 0)
 
         pygame.display.flip()
         frame += 1
