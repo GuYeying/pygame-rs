@@ -762,7 +762,7 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     Py 包装（暴露面收敛：ResourceAccess + 主屏 RenderSurface 两入口，
     wgpu 裸对象零出界，不开 features 口）；D=with raw_render() 直绘
     会话（set_pipeline/set_bind_group/draw_mesh，经 OverlayCtx 回放）。
-- **批次 53（2026-10-24）：渲染架构阶段 B——客人相机对齐（egui 中间面
+- **批次 53（2026-10-25）：渲染架构阶段 B——客人相机对齐（egui 中间面
   方案 + 调试线全局跟随原语）**：
   - **方案定夺**：egui vendor fork 被否（维护成本）——改**中间面方案**
     （零改 egui-wgpu）：egui 自带管线画进持久中间 Surface（Rgba8/1x、
@@ -774,6 +774,12 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     解算）+ `OverlayCtx::pass_on_surface`（任意离屏面开客人通道）+
     `OverlayCtx::blit_fullscreen(src)`（全屏合成——一次性相机 uniform/
     vbo 与 encode() 同定约）+ `OverlayCtx::size()`；
+  - **快照时序修复**（同日追加，用户审查发现）：主屏 egui 收口在
+    present 帧末——帧内多次 set_camera 时现算 MVP 拿到帧末状态；
+    DeferredFrame 排程时点快照 camera_mvp_for(目标尺寸) + 引擎
+    `blit_fullscreen_with(src, mvp)`——"draw_ui 时刻的相机"精确语义
+    （同帧 A 相机主屏 / B 相机离屏面板各得其所）；引擎侧无参
+    blit_fullscreen 保留现算语义（即时客人用）；
   - **egui 跟随语义**（临时验证脚本实测）：默认正交 1:1（pip_test 盲验
     滑条/数值/按钮全正常）；Manual 透视（identity view）下全屏 quad
     z=0 恰在相机平面 → w=0 退化不可见（数学一致的预期）——实用跟随
@@ -786,4 +792,6 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - **验收**：pip_test SUMMARY PASS + 盲验（画中画 3D 线 + egui 面板
     滑条全正常）；egui_test 4 断言 + 3200 帧稳定；surf_probe/
     rapier3d_test SUMMARY PASS（零回归）；wasm 四案例重打包 OK；
-  - font/gfxdraw 零改造自动对齐（Batch 路径，批次 52 已覆盖）。
+  - font/gfxdraw 零改造自动对齐（Batch 路径，批次 52 已覆盖）；
+  - **日志同步**：starfish doc/log/starfish_changelog_2026-10-25.md
+    （阶段 A/B 全记录——设计背景/方案/关键保证/测试状态/提交链）。
