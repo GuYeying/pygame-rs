@@ -976,3 +976,23 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   跨版本；⑤脚本协议与 runner 三件套完全一致（game.toml entry +
   async def main + next_frame 帧桥）；⑥实施三阶段路径 + 三个开放
   问题（实施前定夺）。**仅设计稿，未动代码**。
+- **批次 61 前置（2026-10-25，用户定夺"为我设计一下"）：开发与游戏
+  打包体系设计稿**（reference/开发与游戏打包体系设计稿.md）——两大
+  议题定约：
+  - **开发/打包分离**：pypg = 开发解释器（"导出的 python 可执行
+    文件"——REPL/-c/脚本三形态 + --game 门；pygame 全内置零 Rust
+    工具链）；build_\*.py = 分发打包器——两链互不感知；
+  - **游戏打包深水区四件套**：①包格式 **.pgz**（zip 容器 +
+    manifest.toml）+ 保护四级（L0 散装/L1 明文 zip/L2 **字节码化**
+    ——RustPython marshal serialize_code 已核实现成/L3 AES 加密包
+    体+密钥随分发单元；不做 L4 自定义壳）；②资源 provider 抽象
+    （assets:// 统一前缀——Dir/Zip/EncZip/Fetch 四后端，游戏代码
+    跨级零改动）；③**平台 import 一致性** = 打包期 ast 扫描生成
+    import_map + 运行期统一 finder（zipimporter 内置已核实为兜底）
+    ——差异吸收在引擎内；④兼容面管理（stdlib 子集"已验证清单"+
+    打包期未实现模块即警告）；
+  - 技术事实核实：marshal 完整（serialize/deserialize_code 现成）、
+    zipimporter 已在 path_hooks（zip 内 import 零自研起步）；
+  - 实施路径 P1-P7（P1 pypg → P2 pgz L1 → P3 import 清单 → P4
+    字节码 = 最小完整闭环）；三个开放问题（pip 生态不做/合集形态/
+    动态 import 报错严格度）。
