@@ -443,7 +443,12 @@ pub(crate) mod render {
                 )));
             }
             let bytes: Vec<u8> = n.iter().flat_map(|v| (*v as f32).to_le_bytes()).collect();
-            let mut b = self.access.mesh_builder(formats, bytes);
+            // 顶点恒带 COPY_DST（update_mesh 的 write_buffer 硬要求——
+            // 动态几何是 mesh 常规用法，绑定层默认开启免用户踩坑）
+            let mut b = self
+                .access
+                .mesh_builder(formats, bytes)
+                .with_vertex_usages(wgpu::BufferUsages::COPY_DST);
             if let Some(idx) = args.indices {
                 let idx: Vec<i64> =
                     vm.extract_elements_with(&idx, |o| i64::try_from_object(vm, o.to_owned()))?;
@@ -453,7 +458,9 @@ pub(crate) mod render {
                         vm.new_value_error(format!("索引越界（0..=65535）：{i}"))
                     })?);
                 }
-                b = b.with_short_indices(u16s);
+                b = b
+                    .with_short_indices(u16s)
+                    .with_index_usages(wgpu::BufferUsages::COPY_DST);
             }
             let m = b.build(args.label.as_deref(), None);
             Ok(PyMesh { inner: m }.into_ref(&vm.ctx))
