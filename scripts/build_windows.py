@@ -37,7 +37,7 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pack_common import load_cfg
+from pack_common import load_cfg, ensure_toml
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -109,14 +109,14 @@ def copy_globs(patterns: list, dst_root: Path) -> None:
                 shutil.copy2(p, dst)
 
 
-def build_one(toml_path: Path) -> None:
+def build_one(toml_path: Path, main_py: Path) -> None:
     cfg = load_toml(toml_path)
     name = cfg["app"]["name"]
     title = cfg.get("app", {}).get("title", name)
     features = cfg.get("build", {}).get("features", [])
     assets = cfg.get("assets", {})
 
-    src_py = CRATE_DIR / "examples" / f"{name}.py"
+    src_py = main_py
     if not src_py.is_file():
         die(f"游戏源码缺失: {src_py}")
 
@@ -148,34 +148,33 @@ def build_one(toml_path: Path) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="pygame-rs 桌面打包（python.exe 形态）")
-    ap.add_argument("names", nargs="*", help="游戏名（pack/<名>.windows.toml）")
-    ap.add_argument("--init", metavar="名", help="生成 pack/<名>.windows.toml 模板")
-    ap.add_argument("--all", action="store_true", help="打包 pack/*.windows.toml 全部")
+    ap = argparse.ArgumentParser(description="pygame-rs 桌面打包（python.exe 形态；入口自动发现——免 --init）")
+    ap.add_argument("targets", nargs="*", help="游戏名 / 路径（目录含 main.py 或 .py 文件）；无参 = games/ 全部")
+    ap.add_argument("--init", metavar="名", help="仅生成 pack/<名>.windows.toml 模板（一般无需——首次打包自动落盘）")
     args = ap.parse_args()
 
     if args.init:
-        PACK_DIR.mkdir(exist_ok=True)
-        t = PACK_DIR / f"{args.init}.windows.toml"
-        if t.exists():
-            die(f"已存在: {t}")
-        t.write_text(TEMPLATE.format(name=args.init), encoding="utf-8")
-        print(f"[OK] 模板已生成: {t}（改完直接 python build_windows.py {args.init}）")
+        t = ensure_toml(CRATE_DIR, args.init, "windows", TEMPLATE)
+        print(f"[OK] 模板: {t}")
         return
 
-    if args.all:
-        tomls = sorted(PACK_DIR.glob("*.windows.toml"))
-        if not tomls:
-            die(f"{PACK_DIR} 无 *.windows.toml（先 --init）")
-        for t in tomls:
-            build_one(t)
-        return
+    # 目标解析：无参 = games/ 全部；参数 = 名/路径自动发现
+    from pack_common import resolve_game, scan_games
+    games = []
+    if not args.targets:
+        games = scan_games(CRATE_DIR)
+        if not games:
+            die(f"{CRATE_DIR / 'games'} 下无游戏（每游戏一子目录含 main.py）")
+    else:
+        for a in args.targets:
+            got = resolve_game(CRATE_DIR, a)
+            if got is None:
+                die(f"未找到游戏: {a}（games/<名>/main.py 或 examples/<名>.py）")
+            games.append(got)
 
-    for n in args.names:
-        t = PACK_DIR / f"{n}.windows.toml"
-        if not t.is_file():
-            die(f"未找到 {t}（先 --init {n}）")
-        build_one(t)
+    for name, main_py in games:
+        t = ensure_toml(CRATE_DIR, name, "windows", TEMPLATE)
+        build_one(t, main_py)
 
 
 if __name__ == "__main__":

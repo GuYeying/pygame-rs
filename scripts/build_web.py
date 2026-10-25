@@ -230,7 +230,7 @@ def check_bindgen_version():
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pack_common import load_cfg
+from pack_common import load_cfg, ensure_toml, resolve_game
 
 
 def load_toml(path: Path) -> dict:
@@ -238,9 +238,7 @@ def load_toml(path: Path) -> dict:
 
 
 def build_one(name, build_ts):
-    toml = PACK_DIR / f'{name}.web.toml'
-    if not toml.is_file():
-        sys.exit(f'[FAIL] 未找到 {toml}（先 --init {name}）')
+    toml = ensure_toml(ROOT, name, 'web', WEB_TEMPLATE)
     cfg = load_toml(toml)
     app = cfg.get('app', {})
     windowed = app.get('windowed', True)
@@ -263,26 +261,33 @@ def build_one(name, build_ts):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='pygame-rs Web 构建（toml 驱动）')
-    ap.add_argument('names', nargs='*', help='案例名（pack/<名>.web.toml）')
+    ap = argparse.ArgumentParser(description='pygame-rs Web 构建（toml 驱动；入口自动发现）')
+    ap.add_argument('targets', nargs='*', help='案例名 / 路径（web 须 examples 注册的案例——games/ 形态待通用 runner）')
     ap.add_argument('--all', action='store_true', help='构建 pack/*.web.toml 全部')
-    ap.add_argument('--init', metavar='名', help='生成 pack/<名>.web.toml 模板')
+    ap.add_argument('--init', metavar='名', help='仅生成 pack/<名>.web.toml 模板（首次打包自动落盘，一般无需）')
     args = ap.parse_args()
 
     if args.init:
-        PACK_DIR.mkdir(exist_ok=True)
-        t = PACK_DIR / f'{args.init}.web.toml'
-        if t.exists():
-            sys.exit(f'[FAIL] 已存在: {t}')
-        t.write_text(WEB_TEMPLATE.format(name=args.init), encoding='utf-8')
-        print(f'[OK] 模板已生成: {t}（改完直接 python build_web.py {args.init}）')
+        t = ensure_toml(ROOT, args.init, 'web', WEB_TEMPLATE)
+        print(f'[OK] 模板: {t}')
         return
 
     if args.all:
         names = [p.name.removesuffix('.web.toml')
                  for p in sorted(PACK_DIR.glob('*.web.toml'))]
     else:
-        names = args.names
+        # 自动发现：名字/路径 → games/<名>/ 或 examples/<名>.py；
+        # web 编译单元在 examples/<名>.rs——games/ 形态提示通用 runner
+        names = []
+        for a in args.targets:
+            got = resolve_game(ROOT, a)
+            if got is None:
+                sys.exit(f'[FAIL] 未找到游戏: {a}')
+            n, main_py = got
+            if main_py.parent.name != 'examples':
+                sys.exit(f'[FAIL] {n}（{main_py}）不在 examples/——web 需 Cargo example '
+                         f'注册；games/ 纯 Python 形态待通用 runner（已立项）')
+            names.append(n)
     if not names:
         ap.error('未指定案例名（或用 --all 打包 pack/*.web.toml 全部）')
 

@@ -43,7 +43,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 ABI_DEFAULT = "arm64-v8a"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pack_common import load_cfg
+from pack_common import load_cfg, ensure_toml, resolve_game
 
 ANDROID_TEMPLATE = """# Android APK 打包配置（build_apk.py --init 生成；可直接改）
 [app]
@@ -146,24 +146,26 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.init:
-        PACK_DIR.mkdir(exist_ok=True)
-        t = PACK_DIR / f"{args.init}.android.toml"
-        if t.exists():
-            die(f"已存在: {t}")
-        t.write_text(ANDROID_TEMPLATE.format(name=args.init), encoding="utf-8")
-        print(f"[OK] 模板已生成: {t}（改完直接 python build_apk.py {args.init}）")
+        t = ensure_toml(CRATE_DIR_DEFAULT, args.init, "android", ANDROID_TEMPLATE)
+        print(f"[OK] 模板: {t}")
         return
     if not args.example:
-        ap.error("未指定示例名（或 --init <名> 生成模板）")
+        ap.error("未指定示例名（或 --init <名> 仅生成模板）")
 
-    # toml 配置（存在则读；命令行参数覆盖 toml 值）
-    cfg = {"app": {}, "build": {}, "package": {}}
-    t = PACK_DIR / f"{args.example}.android.toml"
-    if t.is_file():
-        cfg = load_cfg(t)
-        print(f"[cfg] {t}")
-    else:
-        print(f"[cfg] 未找到 {t}——纯参数模式（历史行为）")
+    # 自动发现：名字/路径 → examples/<名>.py（android 编译单元在
+    # examples/<名>_android.rs；games/ 纯 Python 形态待通用 runner）
+    got = resolve_game(CRATE_DIR_DEFAULT, args.example)
+    if got is None:
+        die(f"未找到游戏: {args.example}（games/<名>/main.py 或 examples/<名>.py）")
+    args.example, main_py = got
+    if main_py.parent.name != "examples":
+        die(f"{args.example} 不在 examples/——android 需 <名>_android 注册；"
+            "games/ 纯 Python 形态待通用 runner（已立项）")
+
+    # toml 配置（缺失自动落盘默认；命令行参数覆盖 toml 值）
+    t = ensure_toml(CRATE_DIR_DEFAULT, args.example, "android", ANDROID_TEMPLATE)
+    cfg = load_cfg(t)
+    print(f"[cfg] {t}")
     args.abi = args.abi or cfg.get("build", {}).get("abi") or ABI_DEFAULT
     args.orientation = args.orientation or cfg.get("app", {}).get("orientation") or "landscape"
     if args.features is None:

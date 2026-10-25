@@ -918,3 +918,18 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     内置 mini 解析 fallback——打包配置语法子集，零依赖）；
   - **pack/ 目录**：三平台 toml 各自独立（<名>.windows/.web/.android
     .toml），A 平台用 A 认识的键（用户定约）。
+- **批次 58（2026-10-25，用户定夺）：打包入口自动发现——免 --init**：
+  - **目标解析**（pack_common.resolve_game）：参数 = 名字 / 路径
+    （目录含 main.py 或 .py 文件）；优先 games/<名>/（**用户游戏的家**
+    ——新约定目录，mini_game 为活示例），次 examples/<名>.py（存量
+    案例）；**无参 = games/ 全部**（scan_games）；
+  - **toml 缺失自动落盘**：ensure_toml 首次打包按平台模板自动生成
+    pack/<名>.<平台>.toml（打印提示可改后重打）——--init 退役为
+    "仅生成模板不打包"的显式口；
+  - **web/apk 的 games/ 形态**：报错指路（需 Cargo example 注册；
+    games/ 纯 Python 跨平台待**通用 runner 立项**——Web 通用 wasm
+    runner [fetch main.py] + Android 通用 APK [assets 读 main.py]，
+    届时游戏纯 Python 化零 Rust 编译）；
+  - 验证：名字直打（toml 已删→自动生成+打包 ✓）、games/mini_game
+    路径形态（自动生成 toml + dist 组装 + runner 实跑中文标题 ✓）、
+    web 对 games 形态报错指路 ✓。
