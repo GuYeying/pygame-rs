@@ -964,3 +964,15 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - 入口三件套定约：**async def main()**（唯一入口函数）+ **toml
     [app] entry**（入口文件名，缺省 main.py）+ **pygame.next_frame()**
     （帧桥 awaitable——将来网络 awaitable 同机制扩展）。
+- **批次 60 前置（2026-10-25，用户定夺"先保证可读性"）：分发形态双
+  形态设计稿**（reference/分发形态双形态设计稿.md）——初步分析定约：
+  ①**一核多壳**（核心 rlib 不动；exe/链接库/Android so/Web wasm 都
+  是平级入口壳）；②链接库 = 把 Android/Web 两种隐式链接库形态统一到
+  显式 **C-ABI 协议**（v1 一把梭级 `pgrs_run(game_dir)` /
+  `pgrs_run_script` / `pgrs_version`——实现≈1 天；v2 宿主持循环级
+  init/step/shutdown 按需）；③窗口归属三形态（a 库自建 v1 / b 宿主
+  raw-handle——starfish-render surface_from_raw_handles 地基已通待
+  绑定层暴露 / c 离屏回传）；④ABI 定约：同仓同版本配套分发，不承诺
+  跨版本；⑤脚本协议与 runner 三件套完全一致（game.toml entry +
+  async def main + next_frame 帧桥）；⑥实施三阶段路径 + 三个开放
+  问题（实施前定夺）。**仅设计稿，未动代码**。
