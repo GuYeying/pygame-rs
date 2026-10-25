@@ -2,9 +2,9 @@
 # 承载一切变换**（2D 仿射 / 3D 模型矩阵同一入口）。
 # 上半（默认正交相机）：同一离屏面 旋转30° / 缩放1.4 / 水平镜像 三联
 #   + 右侧 pygame.transform.rotate 烘焙对照（旋转结果一次烘焙）。
-# 下半（pygame.render.set_camera 透视 + render_depth 深度会话）：
+# 下半（pygame.render.set_default_camera 透视 + render_depth 深度会话）：
 #   同一面以模型矩阵空间放置——三张卡片 z 递增（近大远小），
-#   深度遮挡自然成立；reset_camera 后文字回到 2D 正交。
+#   深度遮挡自然成立；会话尾再切回默认（Auto）相机后文字回正交。
 # 交互：ESC / 关窗退出；断言收口后不退场（视觉验收保持窗）。
 import pygame
 
@@ -16,7 +16,7 @@ def game():
         "上半：blit_transform 2D 三联（旋转30°/缩放1.4/水平镜像）· 右侧 transform.rotate 烘焙对照",
         True, (205, 205, 205))
     sub = cjk.render(
-        "下半：render.set_camera(透视) + blit_transform 空间放置（z=-2.2/-3.2/-4.2 近大远小）",
+        "下半：render.set_default_camera(透视) + blit_transform 空间放置（z=-2.2/-3.2/-4.2 近大远小）",
         True, (205, 205, 205))
     _fail = []
 
@@ -79,14 +79,15 @@ def game():
             t.rect(color=(70, 74, 92), rect=(0, 300, 800, 3))
 
         # ── 下半：Manual 透视 + 深度会话空间放置（近大远小）──
-        pygame.render.set_camera(cam3d)
+        pygame.render.set_default_camera(cam3d)
         if frame_no == 0:
-            st("set_camera 后状态 manual", pygame.render.camera_state() == "manual")
+            st("set_default_camera 后状态 manual", pygame.render.camera_state() == "manual")
         with screen.render_depth() as t:
             t.blit_transform(art, m_near, (255, 120, 120))
             t.blit_transform(art, m_mid, (120, 255, 120))
             t.blit_transform(art, m_far, (120, 160, 255))
-        pygame.render.reset_camera()
+        # 回默认：显式切正交（reset_camera 已撤——Manual 语义自管切换）
+        pygame.render.set_default_camera(pygame.render.camera_ortho(800.0, 600.0))
 
         with screen.render() as t:
             t.blit(sub, (14, 306))
@@ -96,7 +97,7 @@ def game():
         frame_no += 1
 
         if not asserted and frame_no == 60:
-            st("帧循环空档相机状态 auto2d", pygame.render.camera_state() == "auto2d")
+            st("帧循环空档已回切 manual 正交", pygame.render.camera_state() == "manual")
             st("blit_transform 60 帧排程不抛", True)
             asserted = True
             print("[blit-demo] SUMMARY",

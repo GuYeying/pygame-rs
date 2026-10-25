@@ -308,14 +308,14 @@ pub mod pygame {
             Ok(())
         }
 
-        /// set_camera(camera)：全局相机 override（全局语义——渲染
-        /// 架构批次五十二：Surface 自身无相机字段）
+        /// set_default_camera(camera)：设置默认相机（`with render()`
+        /// 批绘制的隐式相机 override——全局语义；raw_render 自管不参与）
         #[pymethod]
-        fn set_camera(
+        fn set_default_camera(
             &self,
             camera: PyRef<crate::rpy::pygame::render::render::PyCamera>,
         ) {
-            starfish_pygame::render::set_camera(&camera.0);
+            starfish_pygame::render::set_default_camera(&camera.0);
         }
 
         /// raw_render(depth=False) -> RawPass：本面底层直绘会话（批次
@@ -655,14 +655,14 @@ pub mod pygame {
             })
         }
 
-        /// set_camera(camera)：全局相机 override（后续全部渲染生效
-        /// 直到 pygame.render.reset_camera——渲染架构批次五十二）
+        /// set_default_camera(camera)：设置默认相机（`with render()`
+        /// 批绘制的隐式相机 override——全局生效，raw_render 自管不参与）
         #[pymethod]
-        fn set_camera(
+        fn set_default_camera(
             &self,
             camera: PyRef<crate::rpy::pygame::render::render::PyCamera>,
         ) {
-            starfish_pygame::render::set_camera(&camera.0);
+            starfish_pygame::render::set_default_camera(&camera.0);
         }
 
         /// raw_render(depth=False) -> RawPass：底层直绘会话（批次 D）
@@ -1193,13 +1193,14 @@ pub mod pygame {
             })
         }
 
-        /// set_camera(camera)：全局相机 override（全局语义）。
+        /// set_default_camera(camera)：设置默认相机（全局语义；
+        /// raw_render 自管不参与）。
         #[pymethod]
-        fn set_camera(
+        fn set_default_camera(
             &self,
             camera: PyRef<crate::rpy::pygame::render::render::PyCamera>,
         ) {
-            starfish_pygame::render::set_camera(&camera.0);
+            starfish_pygame::render::set_default_camera(&camera.0);
         }
 
         /// blit_area(src, dest, area, color=None)：UV 子区域贴图

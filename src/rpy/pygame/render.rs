@@ -145,8 +145,8 @@ pub(crate) mod render {
 
     /// 全局相机 override（后续全部渲染生效直到 reset_camera）。
     #[pyfunction]
-    fn set_camera(camera: PyRef<PyCamera>) {
-        sf::set_camera(&camera.0);
+    fn set_default_camera(camera: PyRef<PyCamera>) {
+        sf::set_default_camera(&camera.0);
     }
 
     /// 当前全局 MVP（Auto 状态按主屏尺寸现算——resize 天然跟随）。

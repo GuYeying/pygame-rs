@@ -853,3 +853,10 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   示范（双 buf 双 bind + 正交/透视两个自建相机，全程未 set_camera，
   断言"状态恒 auto2d"）；set_camera/write_camera_mvp 保留服务
   `with render()` 批绘制面（全局隐式相机只此一职）。
+- **批次 54 补 4（2026-10-25，用户定夺）**：`set_camera` 正名
+  `set_default_camera`（全链路：引擎 render::set_default_camera +
+  RenderPass::set_default_camera + pygame.render.set_default_camera +
+  三会话 t.set_default_camera）——语义澄清：它设置的是 **\`with
+  render()\` 批绘制的隐式默认相机**（Manual override），raw_render
+  自管不参与；blit_transform_demo 回默认改显式
+  set_default_camera(camera_ortho(...))（Manual 语义自管切换示范）。
