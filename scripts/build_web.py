@@ -75,6 +75,11 @@ CANVAS_TEMPLATE = """<!DOCTYPE html>
      按需启用）。screen.get_size() 可在脚本里查询当前渲染尺寸。 */
   canvas {{ outline: none; width: 800px; height: 600px; }}
   p {{ color: #888; font: 13px/1.6 sans-serif; margin: 8px 0 0; }}
+  /* 页面活体指示：浏览器 RAF 帧计数（纯 DOM，与 WebGL 无关）——
+     数字在跳 = 页面渲染循环活着；数字停 = 整页死；数字跳而画布黑
+     = WebGL canvas 合成问题（三态判据） */
+  #raf {{ position: fixed; right: 8px; top: 6px; z-index: 20;
+    color: #6c6; font: 11px/1 Consolas, monospace; opacity: .8; }}
   /* 页面内日志栏：console.* 转写（F12 不开也能看 print/异常——
      远程真机 / 自动化诊断用；上限 200 行滚动） */
   #wlog {{ width: 800px; max-height: 120px; overflow-y: auto; margin: 6px 0 0;
@@ -92,10 +97,20 @@ CANVAS_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <canvas id="starfish-we"></canvas>
+<div id="raf">raf 0</div>
 <p>【pygame-rs】{caption}</p>
 <pre id="wlog" aria-label="console log"></pre>
 <div id="start-overlay"><button id="start-btn">▶ 点击启动</button></div>
 <script type="module">
+// ── 页面活体指示（浏览器 RAF 帧计数；纯 DOM）──────────────────
+(() => {{
+  let n = 0;
+  const el = document.getElementById('raf');
+  const tick = () => {{ n++; if ((n % 10) === 0) el.textContent = 'raf ' + n;
+                       requestAnimationFrame(tick); }};
+  requestAnimationFrame(tick);
+}})();
+
 // ── console 转写（先于 wasm 加载就位；glue 每次调用都查 console.* 属性）──
 const _wl = document.getElementById('wlog');
 const _fmt = a => a.map(x => {{ try {{

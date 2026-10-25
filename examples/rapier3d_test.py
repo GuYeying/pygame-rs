@@ -95,12 +95,10 @@ def game():
 
     label = cjk.render("pygame_physics3d 落体 + DebugLinesRenderer 3D 叠加通道（透视相机 + 深度）",
                        True, (200, 200, 200))
+    # 活体指示：左上角帧计数（每 30 帧重绘——画面在动的直观判据）
+    counter_x, counter_y = 16, 560
 
-    # 3D 调试中转面（用户方案）：屏幕同尺寸深度 Surface——3D 调试线
-    # 烘进离屏纹理（Surface 叠加通道），主屏只做合成（blit 整面 + 文字）
-    view = pygame.Surface((800, 600), depth_buffer=True)
-
-    # ── 帧循环（事件 → step → collect → 离屏 3D 会话 → 主屏合成 → flip）
+    # ── 帧循环（事件 → step → collect → 主屏会话 t.draw_debug_3d 直渲 → flip）
     # 断言收口后**不退场**：场景续演到用户关窗/ESC（视觉验收保持窗）──
     frame_no = 0
     first_y = y0
@@ -120,20 +118,18 @@ def game():
             st("collect 线段非空", sink.line_count() > 0)
             st("line_count 口径合理", sink.line_count() < 65536)
 
-        # ① 屏幕同尺寸离屏面：3D 调试线烘进纹理（__exit__ flush 收口——
-        # 游戏内容与叠加通道一并落纹理）
-        with view.render() as t:
+        # 主屏直渲（用户方案回退验证）：3D 调试线直接排程到 Screen
+        # present 收口（深度通道）
+        with screen.render() as t:
             t.fill((18, 20, 28))
+            t.blit(label, (16, 12))
             if frame_no == 0:
                 no_raise("t.draw_debug_3d 会话内", lambda: t.draw_debug_3d(renderer, sink))
             else:
                 t.draw_debug_3d(renderer, sink)
-
-        # ② 主屏合成：离屏面整体上屏 + 顶部文字（文字最后画在最上层）
-        with screen.render() as t:
-            t.fill((10, 10, 14))
-            t.blit(view, (0, 0))
-            t.blit(label, (16, 12))
+            if frame_no % 30 == 0:
+                t.blit(cjk.render(f"帧 {frame_no}", True, (120, 220, 120)),
+                       (counter_x, counter_y))
 
         pygame.display.flip()
         frame_no += 1
