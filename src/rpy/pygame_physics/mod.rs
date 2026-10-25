@@ -140,10 +140,12 @@ pub(crate) mod runtime_3d;
         #[pyclass(module = "pygame_physics", name = "DebugLinesRenderer", unhashable = true)]
         pub(crate) struct PyDebugLinesRenderer {
             pub(crate) ppm: Cell<f32>,
-            /// 按样本数分槽（Screen MSAA / 离屏 1x 各持管线——批次 48
-            /// 画中画：同一渲染器可同时服务两类目标）
-            pub(crate) states:
-                RefCell<Vec<(u32, crate::rpy::pygame_physics::runtime_2d::RendererGpu)>>,
+            /// 按 (样本数, 目标系) 分槽（Screen MSAA 交换链格式 / 离屏 1x
+            /// Rgba8Unorm 各持管线——批次 48 画中画 + 附件格式分套定约：
+            /// 同一渲染器可同时服务两类目标）
+            pub(crate) states: RefCell<
+                Vec<((u32, bool), crate::rpy::pygame_physics::runtime_2d::RendererGpu)>,
+            >,
         }
 
         #[cfg(feature = "physics2d")]
@@ -262,9 +264,11 @@ pub(crate) mod runtime_3d;
         pub(crate) struct PyDebugLinesRenderer3D {
             pub(crate) camera: RefCell<crate::rpy::pygame_physics::runtime_3d::Camera3>,
             pub(crate) camera_epoch: Cell<u32>,
-            /// 按样本数分槽（同 2D——批次 48 画中画）
-            pub(crate) states:
-                RefCell<Vec<(u32, crate::rpy::pygame_physics::runtime_3d::RendererGpu3D)>>,
+            /// 按 (样本数, 目标系) 分槽（同 2D——批次 48 画中画 + 附件
+            /// 格式分套定约）
+            pub(crate) states: RefCell<
+                Vec<((u32, bool), crate::rpy::pygame_physics::runtime_3d::RendererGpu3D)>,
+            >,
         }
 
         #[cfg(feature = "physics3d")]

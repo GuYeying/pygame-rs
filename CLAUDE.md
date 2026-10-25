@@ -661,3 +661,35 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     10 APK（sig_probe 31MB / 常规 32MB / physics3d 33MB）；
   - 验收：桌面三案例（sig_probe 124 + parity 16 + rapier SUMMARY）
     PASS。
+
+- **批次 50（2026-10-24）：Surface 叠加双缺陷修复（Web 实测）+ 画中画布局**：
+  - **缺陷 ①（附件格式分套）**：客人渲染器管线此前一律按 access 默认
+    格式（= 交换链格式）建——Web/macOS 交换链 Bgra8Unorm 而离屏
+    Surface 恒 Rgba8Unorm → wgpu 附件严格校验 panic（Web pip_test
+    实测：`egui_pipeline BGRA8 vs RenderPassEncoder RGBA8`，frame 0
+    被 no_raise 捕获 + frame 1 裸调终止 = 错误打两遍、画面定格）；
+    Windows 桌面交换链恰好 Rgba8 故"碰巧正常"。修复 = **管线按
+    (color_format, sample_count) 分套**（starfish 多窗口定约的叠加
+    目标版）：引擎侧 `Gpu/GpuInfo` 增 `offscreen_access`（Rgba8Unorm
+    专用 access，starfish c4512b6）；绑定侧 egui `EguiRuntime.renderer`
+    单实例 → `HashMap<(格式, 样本数), Renderer>` 槽表（主屏槽 init
+    建 / 离屏槽首用懒建 / **字体图集增量全槽广播**——纹理 id 全局
+    命名各槽独立副本）、rapier 2D/3D 调试线槽键扩 `(样本数, 目标系)`
+    并按目标选 access；
+  - **缺陷 ②（DPI 渗入离屏）**：egui Surface 变体的 RawInput 继承
+    窗口 native_pixels_per_point（Windows 175% 缩放 = 1.75）——离屏
+    面像素即逻辑点，ppp≠1 = 布局/剪裁/字形全错位 → 面板内容被裁空
+    （桌面也空，纯格式修复不解决）。修复 = Surface 变体
+    `viewports[viewport_id].native_pixels_per_point = Some(1.0)`；
+  - **pip_test 布局**（用户反馈"右下太小看不清"）：画中画视口 240×180
+    → **480×360 居中**，egui 面板挪右上，说明文字同步；桌面+Web 双
+    验收：3D 透视网格+三球线框、egui 面板（标题/进度条/仿真秒/复选
+    框/按钮）全部可见，SUMMARY PASS；
+  - **Web 部署配套**：build_web.py 增 CJK 字体部署（ZhaoHua.ttf →
+    web/fonts/cjk.ttf，跳过式）——修复 Web 全案例
+    `ValueError(字体 'cjk' 未预载)`；HTML 模板增**页面内日志栏**
+    （#wlog：console.* 转写 + onerror/rejection 捕获，200 行滚动）——
+    F12 不可用时（真机/自动化）的诊断通道；
+  - **已知遗留**：Web 上 Python `print()` 输出丢失（Rust dlog 正常、
+    Python stdout 桥断——此前全案例死于字体加载故从未暴露；pip_test
+    的 [pip-test] 断言行在 F12 不可见，功能不受影响），排查立项另批。

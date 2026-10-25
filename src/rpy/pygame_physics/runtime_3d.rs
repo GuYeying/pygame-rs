@@ -729,7 +729,7 @@ pub(crate) fn draw_debug_3d(
     let gpu = starfish_pygame::render::gpu_info().ok_or_else(|| {
         vm.new_runtime_error("GPU 未就绪：须在 pygame.display.set_mode 之后调用")
     })?;
-    draw_debug_3d_generic(renderer, sink, samples, size, &gpu, |boxed| {
+    draw_debug_3d_generic(renderer, sink, samples, size, false, &gpu, |boxed| {
         starfish_pygame::render::session::with_screen(|pass| {
             pass.defer_overlay(boxed);
         })
@@ -755,32 +755,44 @@ pub(crate) fn draw_debug_3d_on_surface(
         sink,
         1, // 离屏：无 MSAA
         starfish_pygame::render::DrawTarget::size(surface),
+        true, // 离屏目标：管线按 Rgba8Unorm 离屏 access 建
         &gpu,
         |boxed| surface.defer_overlay(boxed),
     )
 }
 
-/// draw_debug_3d 本体（调度泛化，批次 48）：GPU 惰性装配（**按样本数
-/// 分槽**）+ look-at 相机跟随（viewport/epoch 脏置）→ 经 schedule 排程
-/// （Screen = present 收口 / Surface = flush 收口）。深度通道契约同前。
+/// draw_debug_3d 本体（调度泛化，批次 48）：GPU 惰性装配（**按
+/// (样本数, 目标系) 分槽**——管线按 (color_format, sample_count) 分套
+/// 是 wgpu 硬约束：Screen = 交换链格式 access / Surface = Rgba8Unorm
+/// 离屏 access，交换链格式随平台漂移不得跨目标复用）+ look-at 相机
+/// 跟随（viewport/epoch 脏置）→ 经 schedule 排程（Screen = present
+/// 收口 / Surface = flush 收口）。深度通道契约同前。
 fn draw_debug_3d_generic(
     renderer: PyRef<PyDebugLinesRenderer3D>,
     sink: PyRef<PyLineSink3D>,
     samples: u32,
     size: (u32, u32),
+    offscreen: bool,
     gpu: &starfish_pygame::render::GpuInfo,
     schedule: impl FnOnce(Box<dyn FnOnce(&mut starfish_pygame::render::OverlayCtx) + 'static>),
 ) -> PyResult<()> {
+    // 按目标系选 access：离屏 = Rgba8Unorm（Surface 恒此格式）/ 主屏 =
+    // 交换链格式（Web/macOS Bgra8、Windows Rgba8——按 access 默认值建）
+    let access = if offscreen {
+        gpu.offscreen_access.clone()
+    } else {
+        gpu.access.clone()
+    };
     {
         let mut slots = renderer.states.borrow_mut();
-        let slot = match slots.iter_mut().find(|(s, _)| *s == samples) {
+        let slot = match slots.iter_mut().find(|(k, _)| (k.0, k.1) == (samples, offscreen)) {
             Some(slot) => slot,
             None => {
                 slots.push((
-                    samples,
+                    (samples, offscreen),
                     RendererGpu3D {
-                        renderer: SfDebugLinesRenderer::new(&gpu.access, samples),
-                        access: gpu.access.clone(),
+                        renderer: SfDebugLinesRenderer::new(&access, samples),
+                        access,
                         viewport: (0, 0),
                         camera_epoch: 0,
                     },
@@ -804,10 +816,10 @@ fn draw_debug_3d_generic(
     }
     // 排程（PyRef 'static——闭包持引用计数，present/flush 时段解引用载荷；
     // 主线程单线程契约下无并发借用）
-    let samples_closure = samples;
+    let key = (samples, offscreen);
     schedule(Box::new(move |octx| {
         let mut slots = renderer.states.borrow_mut();
-        if let Some(slot) = slots.iter_mut().find(|(s, _)| *s == samples_closure) {
+        if let Some(slot) = slots.iter_mut().find(|(k, _)| *k == key) {
             let sink_ref = sink.inner.borrow();
             // 3D 通道契约：**带深度附件**（与 2D 的 false 相反）
             octx.with_pass("rapier_debug_3d", true, |pass| {

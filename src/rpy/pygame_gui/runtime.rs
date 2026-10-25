@@ -28,6 +28,7 @@
 //! 会话实现本体（EguiRuntime + draw_ui 三段/DeferredFrame/discard_output）。
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use egui_starfish_we::egui;
@@ -39,13 +40,23 @@ use rustpython_vm::{PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
 use crate::rpy::bridge;
 use super::{PyUi, PyUiRegion};
 
-/// egui 运行时（跨帧持有：输入桥 State + 绘制端 Renderer）。
+/// 渲染器槽键：(目标颜色格式, MSAA 样本数)。egui 管线按附件格式 +
+/// 样本数分套是 wgpu 硬约束——主屏 = 交换链格式（随平台漂移：Web/macOS
+/// Bgra8、Windows Rgba8），Surface 离屏 = 恒 Rgba8Unorm；跨目标复用管线
+/// = 附件校验 panic（Web pip_test 实测）。"管线按 (color_format,
+/// sample_count) 分套"多窗口定约的叠加目标版。
+type RendererKey = (egui_wgpu::wgpu::TextureFormat, u32);
+
+/// egui 运行时（跨帧持有：输入桥 State + 绘制端 Renderer 槽）。
 /// 主线程单例（ADR-6——egui Context 非 Send）；Rc 内壳供延迟叠加闭包
 /// 在 present 时段取用（不跨线程，Box<dyn FnOnce> 无 Send 约束）。
 struct EguiRuntime {
     ctx: egui::Context,
     state: egui_starfish_we::State,
-    renderer: egui_starfish_we::SfEguiRenderer,
+    /// 绘制端按 [`RendererKey`] 分槽：主屏槽 init 期建，离屏槽首用懒建。
+    /// 字体图集纹理增量在**全部活跃槽**间广播（egui 纹理 id 全局命名，
+    /// 各槽持有独立上传副本——图集 MB 级，内存换正确性）。
+    renderers: HashMap<RendererKey, egui_starfish_we::SfEguiRenderer>,
 }
 
 thread_local! {
@@ -139,21 +150,26 @@ pub(crate) fn init(vm: &VirtualMachine) -> PyResult<()> {
     let gpu = starfish_pygame::render::gpu_info()
         .ok_or_else(|| vm.new_runtime_error("GPU 未就绪（set_mode 之后才可 init）"))?;
     let screen = starfish_pygame::display::get_screen();
-    // MSAA 必须与交换链匹配（wgpu 对管线采样数与附件做严格校验）
-    let renderer = egui_starfish_we::SfEguiRenderer::new(egui_wgpu::Renderer::new(
-        &gpu.device,
-        screen.color_format(),
-        egui_wgpu::RendererOptions {
-            msaa_samples: screen.sample_count(),
-            ..Default::default()
-        },
-    ));
+    // 主屏槽：MSAA 与颜色格式必须与交换链匹配（wgpu 对管线采样数/附件
+    // 格式做严格校验）；离屏槽（Rgba8Unorm, 1x）首用懒建
+    let screen_key: RendererKey = (screen.color_format(), screen.sample_count());
+    let mut renderers = HashMap::new();
+    renderers.insert(
+        screen_key,
+        egui_starfish_we::SfEguiRenderer::new(egui_wgpu::Renderer::new(
+            &gpu.device,
+            screen_key.0,
+            egui_wgpu::RendererOptions {
+                msaa_samples: screen_key.1,
+                ..Default::default()
+            },
+        )),
+    );
     EGUI.with(|c| {
         *c.borrow_mut() = Some(Rc::new(RefCell::new(EguiRuntime {
             ctx,
             state,
-            renderer,
-
+            renderers,
         })))
     });
     bridge::devlog(&format!("[egui] init OK（CJK={cjk}，输入 = egui.event(e) 逐条喂）"));
@@ -310,6 +326,8 @@ fn build_frame(
 /// （排程未执行也 drop 安全——纹理 id 与渲染器对账后置空）。
 struct DeferredFrame {
     rc: std::rc::Rc<std::cell::RefCell<EguiRuntime>>,
+    /// 渲染目标槽键（格式+样本数——run_deferred 据此选/懒建 Renderer）
+    key: RendererKey,
     desc: egui_wgpu::ScreenDescriptor,
     output: Option<egui::FullOutput>,
     jobs: Vec<egui::epaint::ClippedPrimitive>,
@@ -323,18 +341,21 @@ impl Drop for DeferredFrame {
     }
 }
 
-/// 弃置产物与渲染器对账：egui 端已记账的 set/free 增量喂给 Renderer
-/// （丢弃会让后续部分更新命中"未分配纹理"panic），随后清空 delta
-/// 保证 drop 安全。用于构建错误弃置路径。
+/// 弃置产物与渲染器对账：egui 端已记账的 set/free 增量喂给**全部槽**
+/// 的 Renderer（丢弃会让后续部分更新命中"未分配纹理"panic；字体增量
+/// 全槽同步——各槽纹理 id 命名空间独立），随后清空 delta 保证 drop
+/// 安全。用于构建错误弃置路径。
 fn discard_output(rt: &mut EguiRuntime, mut output: egui::FullOutput) {
     if let Some(gpu) = starfish_pygame::render::gpu_info() {
-        for (id, deltas) in &output.textures_delta.set {
-            for delta in deltas {
-                rt.renderer.update_texture(&gpu.device, &gpu.queue, *id, delta);
+        for r in rt.renderers.values_mut() {
+            for (id, deltas) in &output.textures_delta.set {
+                for delta in deltas {
+                    r.update_texture(&gpu.device, &gpu.queue, *id, delta);
+                }
             }
-        }
-        for id in &output.textures_delta.free {
-            rt.renderer.free_texture(id);
+            for id in &output.textures_delta.free {
+                r.free_texture(id);
+            }
         }
     }
     output.textures_delta.clear();
@@ -386,13 +407,15 @@ pub(crate) fn draw_ui(vm: &VirtualMachine, panel: PyObjectRef) -> PyResult<()> {
     starfish_pygame::render::session::with_screen(|_| {}).map_err(|_| {
         vm.new_type_error("draw_ui 须在 `with screen.render():` 会话块内调用（t = 会话对象）")
     })?;
+    let screen = starfish_pygame::display::get_screen();
     let (w, h) = starfish_pygame::display::with_window(|win| win.size()).unwrap_or((0, 0));
     let mut raw = take_raw_input(&rc, vm)?;
     raw.screen_rect = Some(egui::Rect::from_min_size(
         egui::Pos2::ZERO,
         egui::vec2(w as f32, h as f32),
     ));
-    draw_ui_generic(vm, rc, panel, raw, |boxed| {
+    let key: RendererKey = (screen.color_format(), screen.sample_count());
+    draw_ui_generic(vm, rc, panel, raw, key, |boxed| {
         starfish_pygame::render::session::with_screen(|pass| {
             pass.defer_overlay(boxed);
         })
@@ -416,6 +439,12 @@ pub(crate) fn draw_ui_on_surface(
         return Err(vm.new_runtime_error("pygame_gui 未初始化（先 init()）"));
     };
     let mut raw = strip_pointer(take_raw_input(&rc, vm)?);
+    // 离屏面无 DPI 概念：像素即逻辑点——ppp 恒 1.0（窗口 DPI 渗入 =
+    // 布局/剪裁/字形全错位：Windows 175% 缩放下 ctx ppp=1.75 而物理
+    // 尺寸被当逻辑点 → desc 错位 → 面板内容被裁空，实测）
+    if let Some(vi) = raw.viewports.get_mut(&raw.viewport_id) {
+        vi.native_pixels_per_point = Some(1.0);
+    }
     raw.screen_rect = Some(egui::Rect::from_min_size(
         egui::Pos2::ZERO,
         egui::vec2(
@@ -423,7 +452,10 @@ pub(crate) fn draw_ui_on_surface(
             starfish_pygame::render::DrawTarget::size(surface).1 as f32,
         ),
     ));
-    draw_ui_generic(vm, rc, panel, raw, |boxed| surface.defer_overlay(boxed))
+    // 离屏目标恒 Rgba8Unorm 无 MSAA（Surface/Texture 纹理定约）——与
+    // 主屏交换链格式（随平台漂移）分槽持管线
+    let key: RendererKey = (egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, 1);
+    draw_ui_generic(vm, rc, panel, raw, key, |boxed| surface.defer_overlay(boxed))
 }
 
 /// draw_ui 本体（调度泛化，批次 48）：构建 0.37 全管线帧 → 经 schedule
@@ -434,6 +466,7 @@ fn draw_ui_generic(
     rc: std::rc::Rc<std::cell::RefCell<EguiRuntime>>,
     panel: PyObjectRef,
     raw: egui::RawInput,
+    key: RendererKey,
     schedule: impl FnOnce(
         Box<dyn FnOnce(&mut starfish_pygame::render::OverlayCtx) + 'static>,
     ),
@@ -445,6 +478,7 @@ fn draw_ui_generic(
     let (output, jobs) = build_frame(&rc, &panel, raw, vm)?;
     let frame = DeferredFrame {
         rc,
+        key,
         desc: egui_wgpu::ScreenDescriptor {
             // 渲染目标像素尺寸 = 变体按目标设置的 screen_rect（Screen =
             // 窗口 / Surface = 表面——尺寸不一致 = egui 剪裁越界 panic）
@@ -458,31 +492,57 @@ fn draw_ui_generic(
     Ok(())
 }
 
-/// 延迟叠加执行体（present 时段运行）：0.37 硬序 update_texture →
+/// 延迟叠加执行体（present/flush 时段运行）：0.37 硬序 update_texture →
 /// update_buffers → render，帧尾 free + clear + platform_output。
+/// 纹理增量喂**全部槽**（字体图集全槽同步——各槽 id 空间独立）；绘制
+/// 用目标槽（无则懒建：离屏槽首用即装配）。
 fn run_deferred(octx: &mut starfish_pygame::render::OverlayCtx, mut frame: DeferredFrame) {
     let Some(mut output) = frame.output.take() else {
         return;
     };
     let mut rt = frame.rc.borrow_mut();
-    // 0.37 契约：先 update_texture，再 update_buffers，最后 render
-    for (id, deltas) in &output.textures_delta.set {
-        for delta in deltas {
-            rt.renderer.update_texture(octx.device(), octx.queue(), *id, delta);
+    // 目标槽懒建（主屏槽 init 已建；离屏槽首用装配）
+    if !rt.renderers.contains_key(&frame.key) {
+        rt.renderers.insert(
+            frame.key,
+            egui_starfish_we::SfEguiRenderer::new(egui_wgpu::Renderer::new(
+                octx.device(),
+                frame.key.0,
+                egui_wgpu::RendererOptions {
+                    msaa_samples: frame.key.1,
+                    ..Default::default()
+                },
+            )),
+        );
+    }
+    // 0.37 契约：先 update_texture（全槽广播），再 update_buffers（目标
+    // 槽），最后 render（目标槽）
+    for r in rt.renderers.values_mut() {
+        for (id, deltas) in &output.textures_delta.set {
+            for delta in deltas {
+                r.update_texture(octx.device(), octx.queue(), *id, delta);
+            }
         }
     }
+    let renderer = rt
+        .renderers
+        .get_mut(&frame.key)
+        .expect("目标槽刚 ensure（懒建或 init 已建）");
     // 通道前命令（uniform/回调 prepare）先于绘制通道提交
     let mut pre = octx.create_command_encoder();
     let mut cmds =
-        rt.renderer.update_buffers(octx.device(), octx.queue(), &mut pre, &frame.jobs, &frame.desc);
+        renderer.update_buffers(octx.device(), octx.queue(), &mut pre, &frame.jobs, &frame.desc);
     cmds.push(pre.finish());
     octx.submit_before(cmds);
     octx.with_pass("pygame.egui", false, |pass| {
-        rt.renderer.render(pass, &frame.jobs, &frame.desc);
+        renderer.render(pass, &frame.jobs, &frame.desc);
     });
-    // 纹理退场 + delta 清空（不 clear 会 drop panic——0.37 实测坑）
-    for id in &output.textures_delta.free {
-        rt.renderer.free_texture(id);
+    // 纹理退场 + delta 清空（不 clear 会 drop panic——0.37 实测坑；
+    // free 全槽广播）
+    for r in rt.renderers.values_mut() {
+        for id in &output.textures_delta.free {
+            r.free_texture(id);
+        }
     }
     output.textures_delta.clear();
     let egui::FullOutput { platform_output, .. } = output; // delta 已空，余字段安全 drop

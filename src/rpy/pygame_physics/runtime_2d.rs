@@ -688,6 +688,7 @@ pub(crate) fn draw_debug(
         sink,
         samples,
         size,
+        false,
         &gpu,
         |boxed| {
             starfish_pygame::render::session::with_screen(|pass| {
@@ -715,32 +716,42 @@ pub(crate) fn draw_debug_on_surface(
         sink,
         1, // 离屏：无 MSAA
         starfish_pygame::render::DrawTarget::size(surface),
+        true, // 离屏目标：管线按 Rgba8Unorm 离屏 access 建
         &gpu,
         |boxed| surface.defer_overlay(boxed),
     )
 }
 
-/// draw_debug 本体（调度泛化，批次 48）：GPU 惰性装配（**按样本数分槽**
-/// ——Screen MSAA 与离屏 1x 各持管线）+ 相机跟随（viewport 脏置）→ 经
-/// schedule 排程（Screen = present 收口 / Surface = flush 收口）。
+/// draw_debug 本体（调度泛化，批次 48）：GPU 惰性装配（**按 (样本数,
+/// 目标系) 分槽**——管线按 (color_format, sample_count) 分套是 wgpu
+/// 硬约束：Screen = 交换链格式 access / Surface = Rgba8Unorm 离屏
+/// access）+ 相机跟随（viewport 脏置）→ 经 schedule 排程（Screen =
+/// present 收口 / Surface = flush 收口）。
 fn draw_debug_generic(
     renderer: PyRef<PyDebugLinesRenderer>,
     sink: PyRef<PyLineSink>,
     samples: u32,
     size: (u32, u32),
+    offscreen: bool,
     gpu: &starfish_pygame::render::GpuInfo,
     schedule: impl FnOnce(Box<dyn FnOnce(&mut starfish_pygame::render::OverlayCtx) + 'static>),
 ) -> PyResult<()> {
+    // 按目标系选 access（离屏 Rgba8Unorm / 主屏交换链格式——同 3D）
+    let access = if offscreen {
+        gpu.offscreen_access.clone()
+    } else {
+        gpu.access.clone()
+    };
     {
         let mut slots = renderer.states.borrow_mut();
-        let slot = match slots.iter_mut().find(|(s, _)| *s == samples) {
+        let slot = match slots.iter_mut().find(|(k, _)| (k.0, k.1) == (samples, offscreen)) {
             Some(slot) => slot,
             None => {
                 slots.push((
-                    samples,
+                    (samples, offscreen),
                     RendererGpu {
-                        renderer: SfDebugLinesRenderer::new(&gpu.access, samples),
-                        access: gpu.access.clone(),
+                        renderer: SfDebugLinesRenderer::new(&access, samples),
+                        access,
                         viewport: (0, 0),
                     },
                 ));
@@ -756,10 +767,10 @@ fn draw_debug_generic(
     }
     // 排程（PyRef 'static——闭包持引用计数，present/flush 时段解引用载荷；
     // 主线程单线程契约下无并发借用）
-    let samples_closure = samples;
+    let key = (samples, offscreen);
     schedule(Box::new(move |octx| {
         let mut slots = renderer.states.borrow_mut();
-        if let Some(slot) = slots.iter_mut().find(|(s, _)| *s == samples_closure) {
+        if let Some(slot) = slots.iter_mut().find(|(k, _)| *k == key) {
             let sink_ref = sink.inner.borrow();
             octx.with_pass("rapier_debug", false, |pass| {
                 slot.1.renderer.draw(&slot.1.access, pass, &sink_ref);

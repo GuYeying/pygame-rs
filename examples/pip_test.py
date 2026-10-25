@@ -68,15 +68,16 @@ def game():
     sink3 = rp.LineSink3D()
     cam = rp.DebugLinesRenderer3D(eye=(6.0, 5.0, 10.0), target=(0, 0.5, 0), fov=1.0)
 
-    # 画中画视口：**depth_buffer=True**（3D 深度通道硬契约）
-    pip = pygame.Surface((240, 180), depth_buffer=True)
-    # 游戏内面板：无深度面（2D egui 通道）
+    # 画中画视口：**depth_buffer=True**（3D 深度通道硬契约）；加大居中
+    # 展示（480×360——用户反馈右下角太小看不清）
+    pip = pygame.Surface((480, 360), depth_buffer=True)
+    # 游戏内面板：无深度面（2D egui 通道）；右上角
     ui_surf = pygame.Surface((260, 140))
     panel = PipPanel()
 
     egui.init()
 
-    label = cjk.render("画中画：右下 = 3D 物理调试（Surface 深度通道）· 左上 = egui 内嵌面板",
+    label = cjk.render("画中画：中间 = 3D 物理调试（Surface 深度通道）· 右上 = egui 内嵌面板",
                        True, (200, 200, 200))
 
     # ── 帧循环（step → collect → 主屏画面 → 两块画中画 → blit → flip）──
@@ -120,8 +121,8 @@ def game():
         with screen.render() as t:
             t.fill((18, 20, 28))
             t.blit(label, (16, 12))
-            t.blit(pip, (552, 412))
-            t.blit(ui_surf, (16, 40))
+            t.blit(pip, (160, 120))
+            t.blit(ui_surf, (524, 40))
         pygame.display.flip()
         frame_no += 1
 

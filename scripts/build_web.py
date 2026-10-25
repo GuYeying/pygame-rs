@@ -23,6 +23,7 @@
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 TARGET_DIR = ROOT / "target" / "wasm32-unknown-unknown" / "release" / "examples"
+# Web CJK 字体源（fetch 预载用：testhost 的 preload_cjk 经 starfish_io::read
+# 走 fetch "fonts/cjk.ttf"——ZhaoHua：5.1MB / 6767 CJK 字形）
+CJK_FONT_SRC = ROOT / "resources" / "ZhaoHua.ttf"
 
 # 注册清单：名 →（是否窗口类，页面标题说明）
 REGISTRY = {
@@ -71,6 +75,12 @@ CANVAS_TEMPLATE = """<!DOCTYPE html>
      按需启用）。screen.get_size() 可在脚本里查询当前渲染尺寸。 */
   canvas {{ outline: none; width: 800px; height: 600px; }}
   p {{ color: #888; font: 13px/1.6 sans-serif; margin: 8px 0 0; }}
+  /* 页面内日志栏：console.* 转写（F12 不开也能看 print/异常——
+     远程真机 / 自动化诊断用；上限 200 行滚动） */
+  #wlog {{ width: 800px; max-height: 120px; overflow-y: auto; margin: 6px 0 0;
+    padding: 4px 8px; box-sizing: border-box; white-space: pre-wrap;
+    color: #9c9; background: #111; border: 1px solid #222; border-radius: 4px;
+    font: 11px/1.5 Consolas, monospace; text-align: left; }}
   #start-overlay {{ position: fixed; inset: 0; background: rgba(0,0,0,.88);
     display: flex; align-items: center; justify-content: center;
     z-index: 10; }}
@@ -83,8 +93,32 @@ CANVAS_TEMPLATE = """<!DOCTYPE html>
 <body>
 <canvas id="starfish-we"></canvas>
 <p>【pygame-rs】{caption}</p>
+<pre id="wlog" aria-label="console log"></pre>
 <div id="start-overlay"><button id="start-btn">▶ 点击启动</button></div>
 <script type="module">
+// ── console 转写（先于 wasm 加载就位；glue 每次调用都查 console.* 属性）──
+const _wl = document.getElementById('wlog');
+const _fmt = a => a.map(x => {{ try {{
+  return (x && x.message !== undefined) ? x.message : String(x);
+}} catch (e) {{ return '<unprintable>'; }} }}).join(' ');
+for (const m of ['log', 'info', 'warn', 'error']) {{
+  const orig = console[m].bind(console);
+  console[m] = (...a) => {{
+    _wl.textContent += '[' + m + '] ' + _fmt(a) + '\\n';
+    const lines = _wl.textContent.split('\\n');
+    if (lines.length > 200) _wl.textContent = lines.slice(-200).join('\\n');
+    _wl.scrollTop = _wl.scrollHeight;
+    orig(...a);
+  }};
+}}
+window.addEventListener('error', e => {{
+  _wl.textContent += '[onerror] ' + (e.message || e.error) +
+    (e.filename ? ' @ ' + e.filename + ':' + e.lineno : '') + '\\n';
+}});
+window.addEventListener('unhandledrejection', e => {{
+  _wl.textContent += '[rejection] ' + e.reason + '\\n';
+}});
+
 import init from './{name}.js?v={build_ts}';
 // 点击启动 = 浏览器自动播放策略的部署约定：wasm（含 AudioContext
 // 创建）整体落在首次用户手势调用栈之后，三平台行为一致
@@ -207,6 +241,17 @@ def main():
             sys.exit(f"[FAIL] 未注册的示例: {n}（如需新增，往 REGISTRY 加一行）")
 
     WEB.mkdir(parents=True, exist_ok=True)
+    # CJK 字体部署（fetch 预载目标 fonts/cjk.ttf；存在即跳过——
+    # 5MB 字体不必每次重拷）
+    fonts_dir = WEB / "fonts"
+    fonts_dir.mkdir(exist_ok=True)
+    cjk_dst = fonts_dir / "cjk.ttf"
+    if not cjk_dst.is_file():
+        if CJK_FONT_SRC.is_file():
+            shutil.copy2(CJK_FONT_SRC, cjk_dst)
+            print(f"[OK] CJK 字体部署: web/fonts/cjk.ttf（{cjk_dst.stat().st_size // 1048576}MB）")
+        else:
+            print("[WARN] CJK 字体源缺失（resources/ZhaoHua.ttf）——Web 中文将缺字")
     check_bindgen_version()
     from datetime import datetime
     build_ts = datetime.now().strftime("%Y%m%d%H%M%S")
