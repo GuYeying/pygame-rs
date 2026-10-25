@@ -167,3 +167,10 @@ required-features = ["gui"]
 
 [[example]]
 name = "surf_probe"
+required-features = ["physics3d"]
+
+[[example]]
+name = "surf_probe_android"
+path = "examples/surf_probe.rs"
+crate-type = ["cdylib"]
+required-features = ["physics3d"]
