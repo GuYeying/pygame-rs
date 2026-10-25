@@ -795,3 +795,36 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - font/gfxdraw 零改造自动对齐（Batch 路径，批次 52 已覆盖）；
   - **日志同步**：starfish doc/log/starfish_changelog_2026-10-25.md
     （阶段 A/B 全记录——设计背景/方案/关键保证/测试状态/提交链）。
+- **批次 54（2026-10-25）：渲染架构阶段 C+D——底层资源两入口 + raw_render
+  直绘会话（渲染架构重构收官）**：
+  - **C1 门面**（starfish）：starfish-pygame 重导出 starfish-render 资源
+    类型（BindGroup/BindGroupBuilder/Mesh/RenderPipeline/ColorAttachment/
+    DepthAttachment/RenderResourceAccess/RenderSurface/ShaderModule——与
+    pygame 同名的 starfish Texture/RenderPass 不入层）；`Screen::
+    with_surface`（主屏 RenderSurface 访问缝）+ `Surface::texture_view`
+    （Rust 内部缝——bind_group 纹理绑定取样）；
+  - **C2 包装**（pygame.render 模块扩展）：**暴露面收缩定约**——wgpu
+    裸对象（Device/Queue/Buffer/TextureView）零出 Python 界；两入口 =
+    `access(offscreen=False)`（ResourceAccess 工厂：shader/buffer/mesh/
+    bind_group/pipeline/write_buffer——安全收参：布局预设 pos3/pos3uv2/
+    pos3color4/pos3uv2color4、枚举字符串）+ 主屏查询
+    （screen_attachment/screen_format/screen_size/screen_samples）；
+    `write_camera_mvp(buf)`（全局相机定约直写——group0/b0 = 64B 列主
+    MVP，自定义管线与引擎同约定即吃全局相机）；pygame-rs 直依 wgpu
+    （内部桥接类型用，不出 Python 界）；
+  - **D raw_render**：`with t.raw_render(depth=False) as p:` 直绘会话
+    （Screen=present 收口 / Surface=flush 收口回放，恒在内容之上）——
+    命令记录（set_pipeline/set_bind_group/set_mesh/draw/draw_indexed/
+    set_scissor/set_viewport）经 OverlayCtx.with_pass 回放；MRT 不支持；
+  - **RustPython 坑位**：pyfunction/pymethod 裸 Option 参数**不自动
+    可选**（access() 报 expected 1 实测）——可选参数三形态：pymethod
+    用 FromArgs 结构体 #[pyarg(optional)]（draw 系同款）/pyfunction 用
+    FuncArgs kwargs 手动解析（kw_bool/kw_int/kw_f64/kw_str helpers）/
+    或必传定约（blit_transform tint）；
+  - **custom_pipeline_demo**（新案例）：自建 WGSL（相机定约 + time
+    uniform 呼吸）全链验证——桌面 SUMMARY PASS + 盲验（红框渐变 quad
+    平滑渲染）；Web 打包盲验过（Bgra8 上自建管线格式自动对位）；
+  - **验收**：binding_probe 46/46 + pip_test/egui_test 回归 PASS；
+    wasm custom_pipeline_demo/blit_transform_demo 重打包；
+  - **渲染架构 A/B/C/D 全部收官**：全局相机定约 + blit_transform 单
+    接口 + 中间面客人合成 + 调试线跟随 + 资源两入口 + raw_render。

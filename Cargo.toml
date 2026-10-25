@@ -44,6 +44,10 @@ rapier-starfish-debug = { path = "../rapier-starfish-debug", features = ["2d"], 
 egui-starfish-we = { path = "../egui-starfish-we", features = ["render"], optional = true }
 # egui 绘制端（Renderer/ScreenDescriptor 类型面——egui-starfish-we 不重导出）
 egui-wgpu = { version = "0.37.0", optional = true }
+# wgpu 类型直依（渲染架构批次 C：ResourceAccess 包装层的内部桥接类型
+# ——Buffer/BufferUsages/VertexFormat 等 Rust 侧使用；wgpu 裸对象
+# 零出 Python 界的暴露面定约不变。版本与 starfish 同源合并单实例）
+wgpu = { version = "30.0.1", default-features = false }
 
 
 
@@ -181,4 +185,12 @@ name = "blit_transform_demo"
 [[example]]
 name = "blit_transform_demo_android"
 path = "examples/blit_transform_demo.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "custom_pipeline_demo"
+
+[[example]]
+name = "custom_pipeline_demo_android"
+path = "examples/custom_pipeline_demo.rs"
 crate-type = ["cdylib"]

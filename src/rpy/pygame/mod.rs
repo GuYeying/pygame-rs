@@ -318,6 +318,29 @@ pub mod pygame {
             starfish_pygame::render::set_camera(&camera.0);
         }
 
+        /// raw_render(depth=False) -> RawPass：本面底层直绘会话（批次
+        /// D）——__exit__ 排程到本面 flush 收口回放。depth 为 kwargs 可选。
+        #[pymethod]
+        fn raw_render(
+            &self,
+            args: FuncArgs,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyRef<crate::rpy::pygame::render::render::PyRawPass>> {
+            let depth = args
+                .kwargs
+                .get("depth")
+                .and_then(|o| {
+                    use rustpython_vm::convert::TryFromBorrowedObject;
+                    bool::try_from_borrowed_object(vm, o).ok()
+                })
+                .unwrap_or(false);
+            crate::rpy::pygame::render::render::raw_pass(
+                depth,
+                Some(self.surface.clone()),
+                vm,
+            )
+        }
+
         /// blit_area(src, dest, area, color=None)：UV 子区域贴图
         /// （with_batch push_quad_uv 直通——源面像素坐标子区域一次四边形）
         #[pymethod]
@@ -640,6 +663,26 @@ pub mod pygame {
             camera: PyRef<crate::rpy::pygame::render::render::PyCamera>,
         ) {
             starfish_pygame::render::set_camera(&camera.0);
+        }
+
+        /// raw_render(depth=False) -> RawPass：底层直绘会话（批次 D）
+        /// ——`with t.raw_render() as p:` 记录命令，__exit__ 排程到
+        /// present 收口回放（恒在游戏内容之上）。depth 为 kwargs 可选。
+        #[pymethod]
+        fn raw_render(
+            &self,
+            args: FuncArgs,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyRef<crate::rpy::pygame::render::render::PyRawPass>> {
+            let depth = args
+                .kwargs
+                .get("depth")
+                .and_then(|o| {
+                    use rustpython_vm::convert::TryFromBorrowedObject;
+                    bool::try_from_borrowed_object(vm, o).ok()
+                })
+                .unwrap_or(false);
+            crate::rpy::pygame::render::render::raw_pass(depth, None, vm)
         }
 
         /// blit_area(src, dest, area, color=None)：UV 子区域贴图
@@ -967,12 +1010,19 @@ pub mod pygame {
         i32::try_from_object(vm, o.clone()).unwrap_or(0)
     }
     /// 经典全量语义占位：引擎初始化由宿主壳完成，返回 (0, 0)。
-    /// dim=2|3（默认 2）：渲染愿望简写（= pygame.render.init(dim=)
-    /// 同源——3 = Auto3d 透视默认相机）。双时点生效：set_mode 前定型；
-    /// GPU 已就绪（宿主壳预置形态）时相机维即时切换。
+    /// dim=2|3（默认 2，kwargs 可选）：渲染愿望简写（= pygame.render.
+    /// init(dim=) 同源——3 = Auto3d 透视默认相机）。双时点生效：
+    /// set_mode 前定型；GPU 已就绪（宿主壳预置形态）时相机维即时切换。
     #[pyfunction]
-    fn init(dim: Option<i64>) -> (usize, usize) {
-        if let Some(d) = dim {
+    fn init(args: FuncArgs, vm: &VirtualMachine) -> (usize, usize) {
+        if let Some(d) = args
+            .kwargs
+            .get("dim")
+            .and_then(|o| {
+                use rustpython_vm::convert::TryFromBorrowedObject;
+                i64::try_from_borrowed_object(vm, o).ok()
+            })
+        {
             let mut wish = starfish_pygame::render::current_wish();
             wish.dim3d = d == 3;
             starfish_pygame::render::store_wish(wish);

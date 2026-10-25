@@ -4032,6 +4032,7 @@ dependencies = [
  "starfish-video",
  "starfish-we",
  "wasm-bindgen",
+ "wgpu",
 ]
 
 [[package]]
