@@ -4,12 +4,11 @@
 # 驱动同心波纹扩散——引擎内置绘制[fill/blit/draw]无法实现的逐像素
 # 效果，自定义 WGSL 的价值所在）。
 # ① access() 资源链：Shader/Mesh/BindGroup/Pipeline（安全收参）
-# ② raw_render = 严格精细控制（**引擎不做相机兜底**）：相机 buffer
-#    用户全权管理——会话内 write_camera_mvp(buf) 即时写；同帧多
-#    raw 会话（2D/3D 相机切换）各持**独立 buf + 独立 bind**（布局
-#    同构共享 pipeline）。
-# ③ 同帧双会话：大圆盘（Auto2d 正交原位）+ 中央小圆盘（Manual 透视
-#    微缩）。
+# ② raw_render 相机 = **完全自管**（与全局相机零耦合）：各会话持
+#    独立 buf + 独立 bind（布局同构共享 pipeline），矩阵经
+#    `ac.write_buffer(cam_buf, cam.mvp())` 直写（write_buffer 特判
+#    收 Mat4）——不 set_camera / 不 write_camera_mvp。
+# ③ 同帧双会话：大圆盘（自建正交原位）+ 中央小圆盘（自建透视微缩）。
 import pygame
 
 WGSL = """
@@ -97,8 +96,9 @@ def game():
 
     frame = 0
     asserted = False
-    # 透视相机（3D 段）：quad 中心平移到相机轴 + 后移 900（微缩居中）
+    # 两个自建相机（与全局相机零耦合）：正交原位 + 透视居中微缩
     M = pygame.math
+    cam_ortho = pygame.render.camera_ortho(800.0, 600.0)
     cam3d = pygame.render.camera_perspective(0.9, 800.0 / 600.0, 0.1, 2000.0) \
         .with_view(M.mat4_translation(-400.0, -340.0, -900.0))
     while True:
@@ -109,6 +109,9 @@ def game():
                 return
 
         ac.write_buffer(time_buf, [frame / 60.0])
+        # 自管相机：矩阵直写各自 buf（Mat4 特判；零全局相机参与）
+        ac.write_buffer(cam_buf, cam_ortho.mvp())
+        ac.write_buffer(cam_buf3, cam3d.mvp())
 
         with screen.render() as t:
             if frame == 0:
@@ -116,30 +119,26 @@ def game():
                    pygame.render.screen_attachment() is not None)
             t.fill((14, 15, 22))
             t.blit(title, (14, 10))
-            # ── 段 1：Auto2d 正交——大波纹圆盘（buf1 即时写）──
-            pygame.render.write_camera_mvp(cam_buf)
+            # ── 段 1：正交——大波纹圆盘 ──
             with t.raw_render() as p:
                 p.set_pipeline(pipe)
                 p.set_bind_group(0, cam_bind)
                 p.set_mesh(mesh)
                 p.draw(0, 6)
-            # ── 段 2：3D 透视——同一 mesh，独立 buf3/bind3（用户自管：
-            #    set 后即时写；回放时各自 buf 无人再动 → 配对正确）──
-            pygame.render.set_camera(cam3d)
-            pygame.render.write_camera_mvp(cam_buf3)
+            # ── 段 2：透视——同一 mesh，独立 buf3/bind3（自建相机）──
             with t.raw_render() as p:
                 p.set_pipeline(pipe)
                 p.set_bind_group(0, cam_bind3)
                 p.set_mesh(mesh)
                 p.draw(0, 6)
-            pygame.render.reset_camera()
 
         pygame.display.flip()
         frame += 1
 
         if not asserted and frame == 60:
             st("raw_render 60 帧排程不抛", True)
-            st("帧尾相机状态回 auto2d", pygame.render.camera_state() == "auto2d")
+            st("全程未 set_camera 状态恒 auto2d",
+               pygame.render.camera_state() == "auto2d")
             asserted = True
             print("[cp-demo] SUMMARY",
                   "PASS" if not _fail else "FAIL " + str(_fail))

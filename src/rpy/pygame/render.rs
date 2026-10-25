@@ -149,12 +149,6 @@ pub(crate) mod render {
         sf::set_camera(&camera.0);
     }
 
-    /// 回自动相机（Auto2d / Auto3d——创建期愿望）。
-    #[pyfunction]
-    fn reset_camera() {
-        sf::reset_camera();
-    }
-
     /// 当前全局 MVP（Auto 状态按主屏尺寸现算——resize 天然跟随）。
     #[pyfunction]
     fn camera_mvp(vm: &VirtualMachine) -> PyRef<PyMat4> {
@@ -548,7 +542,9 @@ pub(crate) mod render {
             Ok(PyPipeline { inner: p }.into_ref(&vm.ctx))
         }
 
-        /// write_buffer(buf, data)：f32 列表 → 缓冲（LE bytes）
+        /// write_buffer(buf, data)：data = 数值列表（LE f32 bytes）或
+        /// **Mat4**（16 列主 floats 直写——raw_render 自管相机的正道：
+        /// `ac.write_buffer(cam_buf, cam.mvp())`，零全局相机参与）。
         #[pymethod]
         fn write_buffer(
             &self,
@@ -556,7 +552,15 @@ pub(crate) mod render {
             data: PyObjectRef,
             vm: &VirtualMachine,
         ) -> PyResult<()> {
-            let bytes = floats_to_bytes(&data, vm)?;
+            let bytes = if let Some(m) = data.downcast_ref::<PyMat4>() {
+                m.0.get()
+                    .to_cols_array()
+                    .iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect()
+            } else {
+                floats_to_bytes(&data, vm)?
+            };
             self.access.write_buffer(&buf.inner, 0, &bytes);
             Ok(())
         }

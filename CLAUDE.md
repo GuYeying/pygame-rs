@@ -844,3 +844,12 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   同帧多 raw 会话（2D/3D 相机切换）**各持独立 buf + 独立 bind**（布局
   同构共享同一 pipeline）；共享同一 buf 会被后写覆盖（回放延迟性，
   文档明示）。demo 改正解示范（双 buf 双 bind，盲验双盘正确）。
+- **批次 54 补 3（2026-10-25，用户定夺）**：raw_render 相机与全局相机
+  **彻底解耦**——① `pygame.render.reset_camera` 删除（引擎内部愿望
+  切换逻辑保留，仅去 Python 面）；② raw_render 不再借道 set_camera/
+  write_camera_mvp：`access.write_buffer(buf, mat4)` 特判收 Mat4
+  （16 列主 floats 直写）——自建相机 `ac.write_buffer(cam_buf,
+  cam.mvp())` 直写自有 bind group，零全局相机参与；③ demo 改纯自管
+  示范（双 buf 双 bind + 正交/透视两个自建相机，全程未 set_camera，
+  断言"状态恒 auto2d"）；set_camera/write_camera_mvp 保留服务
+  `with render()` 批绘制面（全局隐式相机只此一职）。
