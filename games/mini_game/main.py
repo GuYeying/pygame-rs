@@ -1,7 +1,7 @@
 import pygame
 
 
-def main():
+async def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 24)
     title = cjk.render("games/ mini_game - runner OK", True, (120, 220, 120))
@@ -13,4 +13,4 @@ def main():
             t.fill((16, 18, 26))
             t.blit(title, (40, 40))
         pygame.display.flip()
-        yield
+        await pygame.next_frame()

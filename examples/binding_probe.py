@@ -13,7 +13,7 @@ import pygame
 print(dir(pygame))
 print(dir(pygame.mask))
 print(dir(pygame.event))
-def main():
+async def main():
     screen = pygame.display.set_mode((800, 600))
     font = pygame.font.Font(None, 40)   # 内嵌默认字体（批次 D：拉丁）
     try:
@@ -362,4 +362,4 @@ def main():
         pygame.display.flip()
 
         x = 0 if x >= 730 else x + 4
-        yield
+        await pygame.next_frame()

@@ -12,7 +12,7 @@ import pygame
 import pygame_physics as rp
 
 
-def main():
+async def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 20)
     _fail = []
@@ -119,4 +119,4 @@ def main():
             st("⑤ 3D 线集非空（sink3）", sink3.line_count() > 0)
             st("90 帧无异常", True)
             print("[surf-probe] SUMMARY", "PASS" if not _fail else "FAIL " + str(_fail))
-        yield
+        await pygame.next_frame()

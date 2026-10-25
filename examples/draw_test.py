@@ -6,7 +6,7 @@
 import pygame
 
 
-def main():
+async def main():
     screen = pygame.display.set_mode((800, 600))
     font = pygame.font.Font(None, 20)
     cjk = pygame.font.Font("cjk", 20)
@@ -146,4 +146,4 @@ def main():
             r.geometry("filled", [(580, 480), (740, 480), (740, 540), (580, 540)],
                        [0, 1, 2, 0, 2, 3], (255, 160, 60))
         pygame.display.flip()
-        yield
+        await pygame.next_frame()

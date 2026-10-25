@@ -951,3 +951,16 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - games/async_demo（协程活示例：async def main + await next_frame，
     runner 实跑绿字+矩形帧动画验证）；回归 custom/blit（生成器入口）
     SUMMARY PASS。
+- **批次 59 补（2026-10-25，用户定夺归一化）**：入口**唯一形态
+  `async def main():`**（生成器 def main + yield 退役——async 向下
+  兼容纯同步写法、向上承接将来 await 网络 IO 不卡帧；用户："更好的
+  能使用异步且无影响使用同步"）：
+  - testhost 驱动归一：协程 send(None) 唯一步进；generator 形态
+    入口报错指路（"yield 改 await pygame.next_frame()"）；
+  - 存量 14 文件批量迁移（def main→async def main + 帧尾裸 yield→
+    await pygame.next_frame()，缩进保持）；
+  - 回归：custom/blit SUMMARY PASS + async 化 mini_game/async_demo
+    runner 实跑渲染正常；
+  - 入口三件套定约：**async def main()**（唯一入口函数）+ **toml
+    [app] entry**（入口文件名，缺省 main.py）+ **pygame.next_frame()**
+    （帧桥 awaitable——将来网络 awaitable 同机制扩展）。

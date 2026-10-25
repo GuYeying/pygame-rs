@@ -4,7 +4,7 @@
 import pygame
 
 
-def main():
+async def main():
     # flags 落地验证（批次 O 扩展）：尺寸跟随 + 可调整大小
     screen = pygame.display.set_mode((1000, 700), pygame.display.RESIZABLE)
     _fail = []
@@ -123,4 +123,4 @@ def main():
                               (120, 255, 120) if not _fail else (255, 120, 120)),
                    (12, y + 8))
         pygame.display.flip()
-        yield
+        await pygame.next_frame()

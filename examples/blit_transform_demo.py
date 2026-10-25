@@ -9,7 +9,7 @@
 import pygame
 
 
-def main():
+async def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 17)
     title = cjk.render(
@@ -102,7 +102,7 @@ def main():
             asserted = True
             print("[blit-demo] SUMMARY",
                   "PASS" if not _fail else "FAIL " + str(_fail))
-        yield
+        await pygame.next_frame()
 
 
 # 引擎壳接线（surf_probe 同款）——宿主按名调度 game 协程

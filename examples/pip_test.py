@@ -31,7 +31,7 @@ class PipPanel(egui.UiBase):
         ui.label(f"帧 {self.frames}")
 
 
-def main():
+async def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 20)
     _fail = []
@@ -136,4 +136,4 @@ def main():
             asserted = True
             print("[pip-test] SUMMARY",
                   "PASS" if not _fail else "FAIL " + str(_fail))
-        yield
+        await pygame.next_frame()

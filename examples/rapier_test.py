@@ -7,7 +7,7 @@ import pygame
 import pygame_physics as rp
 
 
-def main():
+async def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 20)
     _fail = []
@@ -156,4 +156,4 @@ def main():
             asserted = True
             print("[rapier-test] SUMMARY",
                   "PASS" if not _fail else "FAIL " + str(_fail))
-        yield
+        await pygame.next_frame()

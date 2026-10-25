@@ -11,7 +11,7 @@
 import pygame
 
 
-def main():
+async def main():
     # 透明 = DIRECTX 后端专属（Vulkan Win32 表面只报 Opaque——wgpu-30
     # d3d12 的 DxgiFromVisual/DirectComposition 才支持逐像素透明）
     screen = pygame.display.set_mode((800, 600), pygame.display.TRANSPARENT | pygame.display.DIRECTX)
@@ -88,4 +88,4 @@ def main():
             r.circle((120, 255, 160), (420, 180),
                      max(6, int(30 * tri(1400, _t))))
         pygame.display.flip()
-        yield
+        await pygame.next_frame()

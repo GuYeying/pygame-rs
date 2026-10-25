@@ -50,7 +50,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
 """
 
 
-def main():
+async def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 17)
     title = cjk.render(
@@ -171,4 +171,4 @@ def main():
             asserted = True
             print("[cp-demo] SUMMARY",
                   "PASS" if not _fail else "FAIL " + str(_fail))
-        yield
+        await pygame.next_frame()

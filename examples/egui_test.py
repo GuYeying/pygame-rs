@@ -57,7 +57,7 @@ class HUD(egui.UiBase):
         ui.label(f"游戏画面 {self.game['size'][0]}x{self.game['size'][1]}")
 
 
-def main():
+async def main():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 20)
     game_state = {"size": [800, 600]}
@@ -146,10 +146,10 @@ def main():
         #     st("属性捕获游戏对象生效", hud.game["size"] == [800, 600])
         #     st("draw_ui 持续 60 帧", True)  # 未抛即通过
         #     break
-        yield
+        await pygame.next_frame()
 
     # ── shutdown（幂等）──
     no_raise("egui.shutdown", lambda: egui.shutdown())
     no_raise("shutdown 后 wants_pointer 可查", lambda: egui.wants_pointer())
     print("[egui-test] SUMMARY", "PASS" if not _fail else "FAIL " + str(_fail))
-    yield
+    await pygame.next_frame()
