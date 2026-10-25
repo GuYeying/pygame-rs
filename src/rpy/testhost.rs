@@ -203,11 +203,14 @@ def next_frame():
                 return Err(format!("帧桥注入失败: {e:?}"));
             }
             // pygame.next_frame 挂载（帧桥函数 → pygame 模块属性）
-            if let (Ok(pg), Ok(nf)) = (
-                vm.import("pygame", 0),
-                scope.globals.get_item("next_frame", vm),
-            ) {
-                let _ = pg.set_attr("next_frame", nf, vm);
+            match (vm.import("pygame", 0), scope.globals.get_item("next_frame", vm)) {
+                (Ok(pg), Ok(nf)) => {
+                    let mounted = pg.set_attr("next_frame", nf, vm);
+                    eprintln!("[bridge-run] next_frame 挂载: {mounted:?}");
+                }
+                (pg, nf) => {
+                    eprintln!("[bridge-run] 挂载失败 pg={pg:?} nf={nf:?}");
+                }
             }
             let entry = scope.globals.get_item("main", vm).map_err(|_| {
                 "入口缺失：脚本须定义 `async def main():`（帧体 await \
@@ -305,6 +308,34 @@ pub async fn run_script(script: &str, source_name: &str) -> Result<(), Box<dyn s
         let run = || -> Result<(), String> {
             let scope = vm.new_scope_with_builtins();
             crate::rpy::install_modules(vm);
+            // 帧桥注入（与游戏门同款——脚本直跑形态同样支持 async
+            // def main + await pygame.next_frame() 的协程游戏）
+            let bridge_code = vm
+                .compile(
+                    r#"
+class _FrameAwait:
+    def __await__(self):
+        yield "frame"
+_next_frame_state = _FrameAwait()
+def next_frame():
+    return _next_frame_state
+"#,
+                    rustpython_vm::compiler::Mode::Exec,
+                    "<run_script frame_bridge>".to_string(),
+                )
+                .map_err(|e| format!("帧桥编译失败: {e}"))?;
+            if let Err(e) = vm.run_code_obj(bridge_code, scope.clone()) {
+                return Err(format!("帧桥注入失败: {e:?}"));
+            }
+            match (vm.import("pygame", 0), scope.globals.get_item("next_frame", vm)) {
+                (Ok(pg), Ok(nf)) => {
+                    let mounted = pg.set_attr("next_frame", nf, vm);
+                    eprintln!("[bridge] next_frame 挂载: {mounted:?}");
+                }
+                (pg, nf) => {
+                    eprintln!("[bridge] 挂载失败 pg={pg:?} nf={nf:?}");
+                }
+            }
             let code = vm
                 .compile(
                     script,

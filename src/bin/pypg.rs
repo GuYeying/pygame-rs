@@ -142,7 +142,10 @@ fn main() {
 
 /// 游戏门（同 pygame-runner）：entry 文件 + async def main() 协程
 async fn run_game(arg: &str) {
-    let p = std::path::PathBuf::from(arg);
+    // canonicalize 先行：相对路径的 parent() 可能为空导致目录误判
+    let p = std::path::PathBuf::from(arg)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(arg));
     let (game_dir, default_entry) = if p.extension().and_then(|e| e.to_str()) == Some("py") {
         // 单文件形态：父目录为游戏目录、文件名为入口
         let dir = p.parent().map(|d| d.to_path_buf()).unwrap_or_default();
