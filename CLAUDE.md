@@ -762,3 +762,28 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     Py 包装（暴露面收敛：ResourceAccess + 主屏 RenderSurface 两入口，
     wgpu 裸对象零出界，不开 features 口）；D=with raw_render() 直绘
     会话（set_pipeline/set_bind_group/draw_mesh，经 OverlayCtx 回放）。
+- **批次 53（2026-10-24）：渲染架构阶段 B——客人相机对齐（egui 中间面
+  方案 + 调试线全局跟随原语）**：
+  - **方案定夺**：egui vendor fork 被否（维护成本）——改**中间面方案**
+    （零改 egui-wgpu）：egui 自带管线画进持久中间 Surface（Rgba8/1x、
+    清透明，原 NDC 公式 1:1 成立），引擎 sprite 管线 `blit_fullscreen`
+    合成回目标（MVP = `camera_mvp_for(目标尺寸)`——Auto2d 像素级 1:1
+    零回归；set_camera 后 egui 跟随全局相机）。**egui 渲染器恒单槽**
+    （原按目标格式分套的必要性随直绘取消而消失）；
+  - **引擎新公开面**：`render::camera_mvp_for(size)`（客人侧全局相机
+    解算）+ `OverlayCtx::pass_on_surface`（任意离屏面开客人通道）+
+    `OverlayCtx::blit_fullscreen(src)`（全屏合成——一次性相机 uniform/
+    vbo 与 encode() 同定约）+ `OverlayCtx::size()`；
+  - **egui 跟随语义**（临时验证脚本实测）：默认正交 1:1（pip_test 盲验
+    滑条/数值/按钮全正常）；Manual 透视（identity view）下全屏 quad
+    z=0 恰在相机平面 → w=0 退化不可见（数学一致的预期）——实用跟随
+    形态 = 带 view 的相机（look_at 类）；240 帧无 panic；
+  - **B2 调试线**：DebugLinesRenderer/3D 增 `set_camera_mvp`（底层
+    原语，rapier-starfish-debug）+ Python `follow_global_camera(enable)`
+    （默认 false：构造相机/ppm 显式优先；开启后 draw 前每帧同步全局
+    MVP；set_camera_lookat/set_camera 再调即解除）；2D 跟随注意：米
+    坐标直入像素正交会过小，配 Manual 相机按 ppm 计入视图；
+  - **验收**：pip_test SUMMARY PASS + 盲验（画中画 3D 线 + egui 面板
+    滑条全正常）；egui_test 4 断言 + 3200 帧稳定；surf_probe/
+    rapier3d_test SUMMARY PASS（零回归）；wasm 四案例重打包 OK；
+  - font/gfxdraw 零改造自动对齐（Batch 路径，批次 52 已覆盖）。

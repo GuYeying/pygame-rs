@@ -57,6 +57,13 @@ struct EguiRuntime {
     /// 字体图集纹理增量在**全部活跃槽**间广播（egui 纹理 id 全局命名，
     /// 各槽持有独立上传副本——图集 MB 级，内存换正确性）。
     renderers: HashMap<RendererKey, egui_starfish_we::SfEguiRenderer>,
+    /// **中间面**（渲染架构批次 B 全局相机对齐）：egui_wgpu 自带管线
+    /// 与引擎定约不同构（NDC 直写无矩阵）——客人先画进面，引擎 sprite
+    /// 管线 `blit_fullscreen` 合成回目标（全局相机 MVP 自然生效）。
+    /// 键 = (槽键, 尺寸)：同槽不同尺寸各一张（画中画/分屏），尺寸变化
+    /// 即重建（churn 可接受——面板场景尺寸恒定）。Arc 持有——借用纪律
+    /// （渲染器可变借用与中间面取用并存）。
+    mids: HashMap<(RendererKey, (u32, u32)), std::sync::Arc<starfish_pygame::render::Surface>>,
 }
 
 thread_local! {
@@ -150,17 +157,19 @@ pub(crate) fn init(vm: &VirtualMachine) -> PyResult<()> {
     let gpu = starfish_pygame::render::gpu_info()
         .ok_or_else(|| vm.new_runtime_error("GPU 未就绪（set_mode 之后才可 init）"))?;
     let screen = starfish_pygame::display::get_screen();
-    // 主屏槽：MSAA 与颜色格式必须与交换链匹配（wgpu 对管线采样数/附件
-    // 格式做严格校验）；离屏槽（Rgba8Unorm, 1x）首用懒建
-    let screen_key: RendererKey = (screen.color_format(), screen.sample_count());
+    // 渲染器恒单槽（渲染架构批次 B 中间面方案）：egui 只画进 Rgba8/1x
+    // 中间面（离屏画布定约），引擎管线合成回各目标——目标格式/MSAA
+    // 由合成段承载，egui 管线不再按目标分套（原"按交换链格式分槽"
+    // 的必要性随直绘取消而消失）。
+    let renderer_key: RendererKey = (egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, 1);
     let mut renderers = HashMap::new();
     renderers.insert(
-        screen_key,
+        renderer_key,
         egui_starfish_we::SfEguiRenderer::new(egui_wgpu::Renderer::new(
             &gpu.device,
-            screen_key.0,
+            renderer_key.0,
             egui_wgpu::RendererOptions {
-                msaa_samples: screen_key.1,
+                msaa_samples: renderer_key.1,
                 ..Default::default()
             },
         )),
@@ -170,6 +179,7 @@ pub(crate) fn init(vm: &VirtualMachine) -> PyResult<()> {
             ctx,
             state,
             renderers,
+            mids: HashMap::new(),
         })))
     });
     bridge::devlog(&format!("[egui] init OK（CJK={cjk}，输入 = egui.event(e) 逐条喂）"));
@@ -501,15 +511,16 @@ fn run_deferred(octx: &mut starfish_pygame::render::OverlayCtx, mut frame: Defer
         return;
     };
     let mut rt = frame.rc.borrow_mut();
-    // 目标槽懒建（主屏槽 init 已建；离屏槽首用装配）
-    if !rt.renderers.contains_key(&frame.key) {
+    // 渲染器恒单槽（中间面 Rgba8/1x——见 init 注释；懒建兜底保持）
+    let renderer_key: RendererKey = (egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, 1);
+    if !rt.renderers.contains_key(&renderer_key) {
         rt.renderers.insert(
-            frame.key,
+            renderer_key,
             egui_starfish_we::SfEguiRenderer::new(egui_wgpu::Renderer::new(
                 octx.device(),
-                frame.key.0,
+                renderer_key.0,
                 egui_wgpu::RendererOptions {
-                    msaa_samples: frame.key.1,
+                    msaa_samples: renderer_key.1,
                     ..Default::default()
                 },
             )),
@@ -524,19 +535,36 @@ fn run_deferred(octx: &mut starfish_pygame::render::OverlayCtx, mut frame: Defer
             }
         }
     }
+    // **中间面两段**（渲染架构批次 B——全局相机对齐，零改 egui-wgpu）：
+    // ① egui 自带管线画进中间面（Rgba8 无深度、清透明——原 NDC 公式
+    //    在面上 1:1 成立，绘制行为与直绘目标完全等价）
+    // ② 引擎 sprite 管线 blit_fullscreen 合成回目标——MVP =
+    //    camera_mvp_for(目标尺寸)：Auto2d = 像素级 1:1 全屏（零回归），
+    //    set_camera 后 egui 跟随全局相机（一处设置、全体生效）。
+    // （中间面 ensure 先于 renderer 借用——同 rt 的两字段不冲突借用）
+    let mid_size = (frame.desc.size_in_pixels[0], frame.desc.size_in_pixels[1]);
+    let mid_key = (frame.key, mid_size);
+    if !rt.mids.contains_key(&mid_key) {
+        rt.mids.insert(
+            mid_key,
+            std::sync::Arc::new(starfish_pygame::render::Surface::new(mid_size)),
+        );
+    }
+    let mid = rt.mids.get(&mid_key).expect("中间面刚 ensure").clone();
     let renderer = rt
         .renderers
-        .get_mut(&frame.key)
-        .expect("目标槽刚 ensure（懒建或 init 已建）");
+        .get_mut(&renderer_key)
+        .expect("渲染器单槽刚 ensure（懒建或 init 已建）");
     // 通道前命令（uniform/回调 prepare）先于绘制通道提交
     let mut pre = octx.create_command_encoder();
     let mut cmds =
         renderer.update_buffers(octx.device(), octx.queue(), &mut pre, &frame.jobs, &frame.desc);
     cmds.push(pre.finish());
     octx.submit_before(cmds);
-    octx.with_pass("pygame.egui", false, |pass| {
+    octx.pass_on_surface("pygame.egui.mid", &mid, egui_wgpu::wgpu::Color::TRANSPARENT, |pass| {
         renderer.render(pass, &frame.jobs, &frame.desc);
     });
+    octx.blit_fullscreen(&mid);
     // 纹理退场 + delta 清空（不 clear 会 drop panic——0.37 实测坑；
     // free 全槽广播）
     for r in rt.renderers.values_mut() {

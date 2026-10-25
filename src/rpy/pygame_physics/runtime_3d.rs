@@ -325,6 +325,7 @@ impl Constructor for PyDebugLinesRenderer3D {
                 fov_y: args.fov.map(|f| f.into_float() as f32).unwrap_or(1.0),
             }),
             camera_epoch: Cell::new(1),
+            follow_global: Cell::new(false),
             states: RefCell::new(Vec::new()),
         })
     }
@@ -686,6 +687,16 @@ impl PyDebugLinesRenderer3D {
         c.fov_y = fov.into_float() as f32;
         drop(c);
         self.camera_epoch.set(self.camera_epoch.get() + 1);
+        self.follow_global.set(false); // 显式相机优先（全局跟随解除）
+    }
+
+    /// follow_global_camera(enable=True)：切全局相机跟随（渲染架构
+    /// 批次 B）——draw 前同步引擎全局 MVP（`pygame.render.set_camera`
+    /// 一处设置、全体生效；Auto 状态按目标尺寸自动解算）。再调
+    /// set_camera_lookat 即解除。
+    #[pymethod]
+    fn follow_global_camera(&self, enable: Option<bool>) {
+        self.follow_global.set(enable.unwrap_or(true));
     }
 }
 
@@ -802,7 +813,16 @@ fn draw_debug_3d_generic(
         };
         let st = &mut slot.1;
         let camera = renderer.camera.borrow();
-        if st.viewport != size || st.camera_epoch != renderer.camera_epoch.get() {
+        if renderer.follow_global.get() {
+            // 全局相机跟随（批次 B）：每帧同步引擎全局 MVP（Manual 用户
+            // override / Auto 按目标尺寸——set_camera 一处设置全体生效）
+            st.renderer.set_camera_mvp(
+                &st.access,
+                starfish_pygame::render::camera_mvp_for(size).to_cols_array_2d(),
+            );
+            st.viewport = size;
+            st.camera_epoch = renderer.camera_epoch.get();
+        } else if st.viewport != size || st.camera_epoch != renderer.camera_epoch.get() {
             st.renderer.set_camera_lookat(
                 &st.access,
                 camera.eye,

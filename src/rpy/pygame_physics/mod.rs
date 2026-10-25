@@ -140,6 +140,9 @@ pub(crate) mod runtime_3d;
         #[pyclass(module = "pygame_physics", name = "DebugLinesRenderer", unhashable = true)]
         pub(crate) struct PyDebugLinesRenderer {
             pub(crate) ppm: Cell<f32>,
+            /// 全局相机跟随（渲染架构批次 B；默认 false——ppm 显式相机
+            /// 优先；follow_global_camera() 开启后 draw 前同步全局 MVP）
+            pub(crate) follow_global: Cell<bool>,
             /// 按 (样本数, 目标系) 分槽（Screen MSAA 交换链格式 / 离屏 1x
             /// Rgba8Unorm 各持管线——批次 48 画中画 + 附件格式分套定约：
             /// 同一渲染器可同时服务两类目标）
@@ -264,6 +267,10 @@ pub(crate) mod runtime_3d;
         pub(crate) struct PyDebugLinesRenderer3D {
             pub(crate) camera: RefCell<crate::rpy::pygame_physics::runtime_3d::Camera3>,
             pub(crate) camera_epoch: Cell<u32>,
+            /// 全局相机跟随（渲染架构批次 B）：true = draw 前同步引擎
+            /// 全局 MVP（camera_mvp_for——set_camera 一处设置全体生效）；
+            /// 默认 false（构造的 look-at 相机 = 显式，优先于全局）
+            pub(crate) follow_global: Cell<bool>,
             /// 按 (样本数, 目标系) 分槽（同 2D——批次 48 画中画 + 附件
             /// 格式分套定约）
             pub(crate) states: RefCell<
