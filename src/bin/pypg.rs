@@ -73,7 +73,10 @@ pygame 全内置（import pygame 即用）；脚本不触渲染则完全不依�
     std::process::exit(2);
 }
 
-starfish_std::app_entry!({
+fn main() {
+    // 直接调 block_on（不用 app_entry! 宏——pypg 纯桌面工具，宏的
+    // Android/Web 入口分支与尾部 exit(0) 是死代码/退出码干扰）
+    starfish_std::app::block_on(async move {
         let mut argv = std::env::args().skip(1);
         let first = match argv.next() {
             Some(a) => a,
@@ -135,6 +138,7 @@ starfish_std::app_entry!({
             }
         }
     });
+}
 
 /// 游戏门（同 pygame-runner）：entry 文件 + async def main() 协程
 async fn run_game(dir: &str) {
