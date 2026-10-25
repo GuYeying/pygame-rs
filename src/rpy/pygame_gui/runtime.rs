@@ -339,6 +339,11 @@ struct DeferredFrame {
     /// 渲染目标槽键（格式+样本数——run_deferred 据此选/懒建 Renderer）
     key: RendererKey,
     desc: egui_wgpu::ScreenDescriptor,
+    /// **合成 MVP 快照**（排程时点的 `camera_mvp_for(目标尺寸)` 产出）：
+    /// 帧内多次 set_camera 时主屏收口（present 帧末）的全局相机可能已
+    /// 非排程时的值——快照锁定"draw_ui 时刻的相机"，A 相机画主屏 /
+    /// B 相机画离屏各得其所（批次 53 补）。
+    compose_mvp: [[f32; 4]; 4],
     output: Option<egui::FullOutput>,
     jobs: Vec<egui::epaint::ClippedPrimitive>,
 }
@@ -495,6 +500,8 @@ fn draw_ui_generic(
             size_in_pixels: [w, h],
             pixels_per_point: output.pixels_per_point,
         },
+        // 排程时点快照全局相机（同帧多次 set_camera 的时序正确性）
+        compose_mvp: starfish_pygame::render::camera_mvp_for((w, h)).to_cols_array_2d(),
         output: Some(output),
         jobs,
     };
@@ -564,7 +571,8 @@ fn run_deferred(octx: &mut starfish_pygame::render::OverlayCtx, mut frame: Defer
     octx.pass_on_surface("pygame.egui.mid", &mid, egui_wgpu::wgpu::Color::TRANSPARENT, |pass| {
         renderer.render(pass, &frame.jobs, &frame.desc);
     });
-    octx.blit_fullscreen(&mid);
+    // 合成 MVP = 排程时点快照（帧内多次 set_camera 时序正确）
+    octx.blit_fullscreen_with(&mid, frame.compose_mvp);
     // 纹理退场 + delta 清空（不 clear 会 drop panic——0.37 实测坑；
     // free 全槽广播）
     for r in rt.renderers.values_mut() {
