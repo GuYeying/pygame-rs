@@ -296,14 +296,18 @@ def next_frame():
 }
 
 /// 运行任意 Python 脚本（**pypg 脚本直跑形态**——与 [`run`] 的游戏门
-/// 约束不同：不预置窗口、不要求 main 入口、无帧循环——脚本顶层同步
-/// 执行至结束；要游戏循环请用 `--game` 门或自建 while True[事件泵在
-/// `event.get` 内自动触发]）。
+/// 同构的完整驱动）：
+/// 1. 帧桥注入（`pygame.next_frame()` 可用）
+/// 2. 顶层执行（定义 + 资源初始化）
+/// 3. **入口自动探测**：脚本定义了 `async def main():` 协程则自动
+///    驱动帧循环（事件泵 → send 步进 → 帧拍；StopIteration = 正常
+///    完成）；无 main = 顶层执行完即收（纯脚本形态）。
 ///
 /// 脚本经 install_modules 装配原生 pygame 面——`import pygame` 即可。
 pub async fn run_script(script: &str, source_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let interp = crate::rpy::new_interpreter();
     let err: RefCell<Option<String>> = RefCell::new(None);
+    let gen_cell: RefCell<Option<rustpython_vm::PyObjectRef>> = RefCell::new(None);
     interp.enter(|vm| {
         let run = || -> Result<(), String> {
             let scope = vm.new_scope_with_builtins();
@@ -346,15 +350,62 @@ def next_frame():
             if let Err(e) = vm.run_code_obj(code, scope.clone()) {
                 return Err(format!("脚本执行异常:\n{}", format_traceback(vm, &e)));
             }
+            // ── 入口自动探测：脚本定义了 `async def main()` 协程 →
+            // 记入 gen_cell 交外层驱动循环（无 main = 纯脚本形态，顶层
+            // 执行完即收）。
+            if let Ok(main_f) = scope.globals.get_item("main", vm) {
+                let co = main_f.call((), vm).map_err(|e| {
+                    format!("入口 main() 调用异常:\n{}", format_traceback(vm, &e))
+                })?;
+                let cls = co.class().name().to_string();
+                if cls == "coroutine" {
+                    *gen_cell.borrow_mut() = Some(co);
+                }
+            }
             Ok(())
         };
         if let Err(msg) = run() {
             *err.borrow_mut() = Some(msg);
         }
     });
-    if let Some(msg) = err.into_inner() {
-        eprintln!("[pypg] {msg}");
-        return Err(msg.into());
+
+    // ── 帧驱动循环（与 testhost::run 同构）：事件泵 → 协程 send 步进
+    // → StopIteration 正常收尾 → 帧拍
+    loop {
+        if starfish_pygame::event::pump() {
+            dlog("pypg", "退出请求，结束");
+            break;
+        }
+        let mut done = false;
+        interp.enter(|vm| {
+            let borrowed = gen_cell.borrow();
+            let Some(genobj) = borrowed.as_ref() else {
+                done = true;
+                return;
+            };
+            match vm.call_method(genobj, "send", (vm.ctx.none.clone(),)) {
+                Ok(_) => {} // 本帧逻辑完成（await 帧桥挂起）
+                Err(exc) => {
+                    let obj: rustpython_vm::PyObjectRef = exc.clone().into();
+                    let cls = obj.class().name().to_string();
+                    if cls == "StopIteration" {
+                        dlog("pypg", "main 协程完成");
+                    } else {
+                        dlog(
+                            "pypg",
+                            &format!("脚本异常:\n{}", format_traceback(vm, &exc)),
+                        );
+                    }
+                    done = true;
+                }
+            }
+        });
+        if done {
+            break;
+        }
+        starfish_pygame::mixer::pump(); // Web 流式解码驱动
+        next_frame().await;
     }
+    starfish_pygame::mixer::quit();
     Ok(())
 }
