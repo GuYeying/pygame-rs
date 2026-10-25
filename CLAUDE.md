@@ -1011,3 +1011,12 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     全程零 diff——本轮全部通过公开 API 外层接入，后续定约延续）；
   - 验证：pypg -c/脚本/--game 三形态 + async_demo/mini_game dist
     实跑全通（绿字标题 + 橙色矩形帧动画）。
+- **批次 60（2026-10-25，用户定夺）：pypg 拆独立仓**——D:\Projects\
+  Rust\pypg（git 分仓，Cargo 同源：path 依赖 pygame-rs + lock 复刻
+  锁 ruff 传递依赖版本——独立解析会拉更新 patch 致 RP codegen 编译
+  炸，实测后以 lock 复刻根治）。本仓删 src/bin/pypg.rs 回归纯 lib
+  + 宿主（runner/examples）；rpy 对外面（install/testhost/rpy 各
+  模块）pub 化完成——**拆仓三步走的①②完成，③物理分仓已落地**。
+  分发形态设计稿（reference/分发形态双形态设计稿.md）与开发/打包
+  体系设计稿（reference/开发与游戏打包体系设计稿.md）为后续演进
+  蓝图。
