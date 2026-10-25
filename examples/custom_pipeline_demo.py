@@ -54,7 +54,7 @@ def game():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 17)
     title = cjk.render(
-        "shader 程序化波纹圆盘（引擎绘制做不到）；中央小盘=同帧透视段（同 buf 快照隔离）",
+        "下=2D 正交对照（恒定）；中央=3D 透视动态盘（摆动+呼吸，2D 做不出的投影变形）",
         True, (205, 205, 205))
     _fail = []
 
@@ -96,11 +96,13 @@ def game():
 
     frame = 0
     asserted = False
-    # 两个自建相机（与全局相机零耦合）：正交原位 + 透视居中微缩
+    # 两个自建相机（与全局相机零耦合）：
+    # - 正交（2D 相机对照）：恒定——盘原位 1:1，波纹世界波长直显
+    # - 透视（3D 相机验证）：**动态**——绕 Y 摆动 ±25° + 距离呼吸
+    #   900↔650 → 中央盘呈现透视梯形倾斜 + 尺寸呼吸（近大远小——
+    #   2D 正交绝对做不出的 3D 投影特征，即"3D 相机在工作"的可视证明）
     M = pygame.math
     cam_ortho = pygame.render.camera_ortho(800.0, 600.0)
-    cam3d = pygame.render.camera_perspective(0.9, 800.0 / 600.0, 0.1, 2000.0) \
-        .with_view(M.mat4_translation(-400.0, -340.0, -900.0))
     while True:
         for e in pygame.event.get():
             if e.type == pygame.event.QUIT:
@@ -108,7 +110,20 @@ def game():
             if e.type == pygame.event.KEYDOWN and e.key == pygame.key.K_ESCAPE:
                 return
 
-        ac.write_buffer(time_buf, [frame / 60.0])
+        t_sec = frame / 60.0
+        # 动态透视 view：T(后移) × R_y(摆动) × T(物体中心→原点)
+        dist = 900.0 - 250.0 * (0.5 + 0.5 * (t_sec * 0.8 % 2.0 - 1.0))
+        yaw = 25.0 * (t_sec * 0.7 % 2.0 - 1.0)
+        view3d = (
+            M.mat4_translation(0.0, 0.0, -dist)
+            .mul_mat4(M.mat4_from_quat(
+                M.quat_from_axis_angle(0.0, 1.0, 0.0, yaw)))
+            .mul_mat4(M.mat4_translation(-400.0, -340.0, 0.0))
+        )
+        cam3d = pygame.render.camera_perspective(
+            0.9, 800.0 / 600.0, 0.1, 2000.0).with_view(view3d)
+
+        ac.write_buffer(time_buf, [t_sec])
         # 自管相机：矩阵直写各自 buf（Mat4 特判；零全局相机参与）
         ac.write_buffer(cam_buf, cam_ortho.mvp())
         ac.write_buffer(cam_buf3, cam3d.mvp())
@@ -119,13 +134,13 @@ def game():
                    pygame.render.screen_attachment() is not None)
             t.fill((14, 15, 22))
             t.blit(title, (14, 10))
-            # ── 段 1：正交——大波纹圆盘 ──
+            # ── 段 1：2D 正交（对照恒定）——大波纹圆盘 ──
             with t.raw_render() as p:
                 p.set_pipeline(pipe)
                 p.set_bind_group(0, cam_bind)
                 p.set_mesh(mesh)
                 p.draw(0, 6)
-            # ── 段 2：透视——同一 mesh，独立 buf3/bind3（自建相机）──
+            # ── 段 2：3D 透视（动态验证）——同一 mesh，独立 buf3/bind3 ──
             with t.raw_render() as p:
                 p.set_pipeline(pipe)
                 p.set_bind_group(0, cam_bind3)
