@@ -38,6 +38,8 @@ pub(crate) mod render {
     use starfish_render::render_resource_access::RenderResourceAccess;
     use std::sync::Arc;
 
+    // ── 绑定层工具（Debug 兜底宏 / kwargs 可选参数解析）──────────
+
     /// pyclass Debug 兜底（透明句柄——不泄内部类型）
     macro_rules! pydbg {
         ($t:ty, $s:expr) => {
@@ -62,6 +64,7 @@ pub(crate) mod render {
             .and_then(|o| bool::try_from_borrowed_object(vm, o).ok())
     }
 
+    /// kwargs 整数解析（同 kw_bool 形态）
     fn kw_int(
         args: &rustpython_vm::function::FuncArgs,
         vm: &VirtualMachine,
@@ -73,6 +76,7 @@ pub(crate) mod render {
             .and_then(|o| i64::try_from_borrowed_object(vm, o).ok())
     }
 
+    /// kwargs 浮点解析（int/float 均收）
     fn kw_f64(
         args: &rustpython_vm::function::FuncArgs,
         vm: &VirtualMachine,
@@ -85,6 +89,7 @@ pub(crate) mod render {
         })
     }
 
+    /// kwargs 字符串解析
     fn kw_str(
         args: &rustpython_vm::function::FuncArgs,
         _vm: &VirtualMachine,
@@ -566,7 +571,9 @@ pub(crate) mod render {
         }
     }
 
-    /// WGSL 着色器（access.shader 产物；透明句柄）
+    // ── 资源句柄（access.* 产物；透明句柄——wgpu 对象不出 Python 界）──
+
+    /// WGSL 着色器（access.shader 产物）
     #[derive(PyPayload)]
     #[pyattr]
     #[pyclass(module = "pygame.render", name = "Shader", unhashable = true)]
