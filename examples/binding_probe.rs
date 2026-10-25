@@ -165,7 +165,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(joined) = cjk_thread.join() {
         match joined {
             Some((p, b)) => {
-                starfish::pygame::font::preload("cjk", b);
+                starfish_pygame::font::preload("cjk", b);
                 stage(&format!("CJK 字体已预载（系统 {p}）"));
             }
             None => dlog("[binding_probe] CJK 系统字体候选全 miss（中文将缺字）"),
@@ -243,12 +243,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Web：浏览器授权框异步触发（首次交互后最稳；授权流缓存待录音复用）
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-    starfish::base::app::spawn_local(async {
-        let ok = starfish::base::permission::ensure_async(
-            starfish::base::permission::Permission::Microphone,
+    starfish_std::app::spawn_local(async {
+        let ok = starfish_pygame::permission::ensure_async(
+            starfish_pygame::permission::Permission::Microphone,
         )
         .await;
-        starfish::base::debug::console_log(&format!(
+        starfish_std::debug::console_log(&format!(
             "[permission] Web 麦克风授权结果: {ok}"
         ));
     });

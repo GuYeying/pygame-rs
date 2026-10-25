@@ -20,7 +20,7 @@ physics2d = ["physics", "rapier-starfish-debug/2d"]
 physics3d = ["physics", "rapier-starfish-debug/3d"]
 
 [dependencies]
-starfish-std        = { path = "../starfish/crates/starfish-std" }
+starfish-std        = { path = "../starfish/crates/starfish-std", features = ["we"] }
 starfish-we         = { path = "../starfish/crates/starfish-we" }
 starfish-time       = { path = "../starfish/crates/starfish-time" }
 starfish-permission = { path = "../starfish/crates/starfish-permission" }
@@ -54,7 +54,7 @@ glam = "0.33"
 # 阻塞实现体外壳——await 处即阻塞处，block_on 语义等价）
 pollster = "0.4"
 # Web 入口宏要求用户 crate 可见 wasm-bindgen（app_entry! 的 start 属性）
-wasm-bindgen = "0.2"
+wasm-bindgen = "0.2.129"
 # RustPython（vendor main 快照 0.6.0-dev，commit 23fcb8d9，2026-09-22）
 # - default-features = false 去 host_env：wasm 必需（crt_fd 依赖不存在），
 #   且 ctypes 恒不用（依赖双向规则的 C 能力替代 = 绑定面 Rust 原生函数）
@@ -71,6 +71,14 @@ rustpython-derive = { path = "src/rpy/dependencies/RustPython-main/crates/derive
 
 [[example]]
 name = "rp_hello"
+
+[[example]]
+name = "sig_probe"
+
+[[example]]
+name = "sig_probe_android"
+path = "examples/sig_probe.rs"
+crate-type = ["cdylib"]
 
 # ── M1 绑定面探针：标准 pygame 写法（原生 pygame 模块 + with 会话渲染）──
 [[example]]
@@ -136,6 +144,16 @@ name = "pip_test_android"
 path = "examples/pip_test.rs"
 crate-type = ["cdylib"]
 required-features = ["physics3d"]
+
+[[example]]
+name = "parity_test"
+required-features = ["gui"]
+
+[[example]]
+name = "parity_test_android"
+path = "examples/parity_test.rs"
+crate-type = ["cdylib"]
+required-features = ["gui"]
 
 [[example]]
 name = "egui_test"

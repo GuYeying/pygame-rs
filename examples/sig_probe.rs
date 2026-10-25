@@ -6,10 +6,11 @@
 //!
 //! 运行：`cargo run -p pygame-rs --example sig_probe`
 //! 预期：`[sig_probe] PASS`；Exit 1 = 契约破坏。
+//! Android：`sig_probe_android`（app_entry 形态——结果走 logcat）。
 
 use pygame_rs::rpy;
 
-fn main() {
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let interp = rpy::new_interpreter();
     let err = interp.enter(|vm| -> Option<String> {
         let scope = vm.new_scope_with_builtins();
@@ -35,10 +36,18 @@ fn main() {
     // 显式收口音频混音器（留到主线程 TLS 析构期 Drop cpal 流会崩）
     starfish_pygame::mixer::quit();
     match err {
-        Some(msg) => {
-            println!("[sig_probe] FAIL: {msg}");
-            std::process::exit(1);
+        Some(msg) => Err(msg.into()),
+        None => {
+            println!("[sig_probe] PASS");
+            Ok(())
         }
-        None => println!("[sig_probe] PASS"),
     }
 }
+
+#[cfg(not(target_os = "android"))]
+fn main() {
+    pollster::block_on(run());
+}
+
+#[cfg(target_os = "android")]
+starfish_std::app_entry!(run());

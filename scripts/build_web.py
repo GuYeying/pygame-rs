@@ -39,6 +39,17 @@ REGISTRY = {
     "font_test": (True, "pygame.font 专项测试：构造族/度量/render 一等化/CJK 链路逐项断言 + 字体样张（[font-test] 行）"),
     "transparent_test": (True, "透明窗口专项验证：桌宠形态基座（TRANSPARENT 创建 + 透明合成 + set_opacity 呼吸；[transparent-test] 行）"),
     "draw_test": (True, "pygame.draw 专项测试：六形状 × 填充/描边 × 颜色形态 × 半透明 + gfxdraw 兼容混绘（[draw-test] 行）"),
+    "rapier_test": (True, "pygame_physics 2D 专项：落体调试线叠加通道（正交相机，[rapier-test] 行）"),
+    "rapier3d_test": (True, "pygame_physics 3D 专项：3D 落体调试线（look-at 透视相机 + 深度通道，[rapier3d-test] 行）"),
+    "egui_test": (True, "pygame_gui 专项：OOP 门面 HUD + 词汇 v2 控件（[egui-test] 行）"),
+    "pip_test": (True, "画中画/游戏内面板：Surface 会话客人叠加（3D 物理动画 + 内嵌面板，[pip-test] 行）"),
+    "parity_test": (True, "绑定收官 parity：颜色表/色彩空间/mixer Channel+Effect/深度会话（[parity-test] 行）"),
+}
+
+# 特例 features（缺省 = default features：gui + physics2d）
+FEATURES = {
+    "rapier3d_test": "physics3d",
+    "pip_test": "physics3d",
 }
 
 CANVAS_TEMPLATE = """<!DOCTYPE html>
@@ -165,8 +176,10 @@ def check_bindgen_version():
 def build_one(name, windowed, build_ts):
     caption = REGISTRY[name][1]
     print(f"=== 构建 {name}（{'canvas' if windowed else 'console'}）===")
+    feats = FEATURES.get(name)
+    feat_args = ["--features", feats] if feats else []
     sh(["cargo", "build", "--release", "--target", "wasm32-unknown-unknown",
-        "--example", name])
+        "--example", name, *feat_args])
     wasm = TARGET_DIR / f"{name}.wasm"
     if not wasm.is_file():
         sys.exit(f"[FAIL] wasm 产物缺失: {wasm}")

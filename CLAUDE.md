@@ -636,3 +636,28 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - 验收：binding_probe selftest 全部通过（新增 color parity/display/
     key/mixer Channel+Effect/render_depth 十六项）+ rapier3d_test/
     pip_test/sig_probe SUMMARY PASS + 引擎测试绿。
+- **批次 49 追加（同日）：parity 案例 + 三端全量打包**：
+  - **parity_test**（新接口验收案例，16 断言 SUMMARY PASS）：颜色表/
+    色彩空间（cmy/hsva/hsla/i1i2i3 为 **getset 属性**非方法）· mixer
+    Channel/Effect/beep（音频）· render_depth 深度会话样张；Cargo
+    双注册（required-features gui）；
+  - **打包脚本升级**：build_web.py REGISTRY 补 5 新案例 + FEATURES
+    表（rapier3d/pip = physics3d）；build_apk.py 增 `--features` 参数；
+  - **wasm 依赖链升级**：wasm-bindgen 0.2.127→0.2.129（CLI 版本对齐）
+    ——精确链式 cargo update（futures 0.4.79 = bindgen 0.2.129 精确
+    配对 + web-sys 0.3.106；鸡生蛋循环破法 = 本 crate 直依赖 pin
+    0.2.129 强制重解析）；
+  - **Android 编译链修复**（三处，历史仅在 android cfg 下编译故从未
+    暴露）：①binding_probe.rs 五处 `starfish::` 旧路径 → 真实 crate
+    路径（starfish_pygame::font::preload / starfish_std::app::spawn_local
+    / starfish_pygame::permission::ensure_async 等）；②testhost.rs
+    `starfish_std::io::read` → `starfish_io::read`；③**starfish-std
+    依赖补 features=["we"]**（app_entry! 的 Android 分支经 $crate::we
+    取 AndroidApp——we 非 default，桌面/wasm 分支不受影响）；
+    ④sig_probe 案例改造 app_entry 双兼容形态（桌面 pollster 阻塞 +
+    Android app_entry；run 返回 Result——宏契约）+ Cargo 双注册
+    （真机可跑签名回归）；
+  - **产物**：web/ 11 案例三件套（html+js+wasm）；target/android-apk/
+    10 APK（sig_probe 31MB / 常规 32MB / physics3d 33MB）；
+  - 验收：桌面三案例（sig_probe 124 + parity 16 + rapier SUMMARY）
+    PASS。

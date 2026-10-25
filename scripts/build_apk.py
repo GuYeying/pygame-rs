@@ -119,6 +119,8 @@ def main() -> None:
     ap.add_argument("--out", default=None, help="产物目录（默认 <仓库根>/target/android-apk）")
     ap.add_argument("--dex", default=None, help="classes.dex 显式路径（默认自动探测）")
     ap.add_argument("--orientation", default="landscape", help="屏幕方向（默认 landscape，与历史可跑包一致）")
+    ap.add_argument("--features", default=None,
+                    help="cargo features（如 physics3d；缺省 = crate default features）")
     args = ap.parse_args()
 
     crate = Path(args.dir).resolve()
@@ -153,8 +155,9 @@ def main() -> None:
 
     # 1) 交叉编译（release 铁律：RP debug genesis 必败）
     print(f"=== 1/5 cargo ndk build ({args.abi}) ===")
+    feat_args = ["--features", args.features] if args.features else []
     sh(["cargo", "ndk", "-t", args.abi, "-P", "26", "-o", str(jni_libs),
-        "--", "build", "--release", "--example", android_example],
+        "--", "build", "--release", "--example", android_example, *feat_args],
        cwd=crate, tail=1)
     so = jni_libs / args.abi / so_name
     if not so.is_file():

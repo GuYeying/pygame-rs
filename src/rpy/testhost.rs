@@ -93,7 +93,7 @@ async fn preload_cjk(tag: &str) {
         ];
         let mut hit = false;
         for p in CJK_CANDIDATES {
-            match starfish_std::io::read(p).await {
+            match starfish_io::read(p).await {
                 Ok(b) => {
                     starfish_pygame::font::preload("cjk", b);
                     dlog(tag, &format!("CJK 字体已预载（系统 {p}）"));
