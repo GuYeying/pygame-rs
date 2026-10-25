@@ -1,14 +1,14 @@
 # custom_pipeline_demo（渲染架构批次 C/D）：自建 WGSL 管线 + raw_render
 # 直绘会话——底层定制化全链路验证。
-# ① pygame.render.access() 两入口取资源工厂 → 自建 Shader/Mesh/
-#    BindGroup/Pipeline（安全收参：布局预设/枚举字符串）
+# 演示形态：**fragment shader 程序化波纹圆盘**（SDF 圆形边界 + time
+# 驱动同心波纹扩散——引擎内置绘制[fill/blit/draw]无法实现的逐像素
+# 效果，自定义 WGSL 的价值所在）。
+# ① access() 资源链：Shader/Mesh/BindGroup/Pipeline（安全收参）
 # ② 全局相机定约：group0/b0 = 64B 列主 mat4 MVP——raw_render(camera=
 #    buf) 会话托管：收口快照、回放时写 buf（同帧 2D/3D 相机来回切、
-#    多 raw 会话共享同一 buf 各自配对——即时写+延迟回放覆盖根治）
-# ③ with t.raw_render(camera=cam_buf) as p: 命令记录 → 收口排程 →
-#    目标提交时点回放（恒在游戏内容之上）
-# 上半：正交 quad（原尺寸）；下半：透视 quad（同 mesh 同 buf，微缩
-# 偏移——两会话各自配对的可视证明）。
+#    多 raw 会话共享同一 buf 各自配对）
+# ③ 同帧双会话：大圆盘（Auto2d 正交原位）+ 中央小圆盘（Manual 透视
+#    微缩）——同一 mesh 同一 buf 两相机，快照隔离的可视证明。
 import pygame
 
 WGSL = """
@@ -23,7 +23,7 @@ struct VIn {
 struct VOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) color: vec4<f32>,
-    @location(1) center_dist: f32,
+    @location(1) world: vec2<f32>,
 };
 
 @vertex
@@ -31,15 +31,21 @@ fn vs_main(in: VIn) -> VOut {
     var o: VOut;
     o.pos = camera.mvp * vec4<f32>(in.pos, 1.0);
     o.color = in.color;
-    o.center_dist = (in.pos.x - 400.0) / 250.0;
+    o.world = in.pos.xy;
     return o;
 }
 
 @fragment
 fn fs_main(in: VOut) -> @location(0) vec4<f32> {
-    let breathe = 0.5 + 0.5 * sin(u_time * 2.0);
-    let c = mix(in.color.rgb, vec3<f32>(breathe, 1.0 - breathe, 0.5 + 0.5 * breathe), 0.6);
-    return vec4<f32>(c, in.color.a);
+    // SDF 圆盘 + 同心波纹（引擎内置绘制无法实现的逐像素程序化效果）
+    let c = vec2<f32>(400.0, 340.0);
+    let d = distance(in.world, c);
+    let r = 235.0;
+    let edge = smoothstep(r, r - 5.0, d);
+    let ring = 0.5 + 0.5 * sin(d * 0.13 - u_time * 5.0);
+    let glow = 1.0 - smoothstep(0.0, r, d) * 0.55;
+    let col = mix(vec3<f32>(0.05, 0.1, 0.35), vec3<f32>(0.15, 0.95, 1.0), ring) * glow;
+    return vec4<f32>(col, edge);
 }
 """
 
@@ -48,7 +54,7 @@ def game():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 17)
     title = cjk.render(
-        "红框内=正交原位 quad；中央微缩=同帧透视段（同 cam_buf，会话快照隔离）",
+        "shader 程序化波纹圆盘（引擎绘制做不到）；中央小盘=同帧透视段（同 buf 快照隔离）",
         True, (205, 205, 205))
     _fail = []
 
@@ -62,15 +68,15 @@ def game():
     # ── 资源链（一次性构建；须 set_mode 后）──
     ac = pygame.render.access()
     shader = ac.shader(WGSL, label="demo_shader")
-    # 渐变 quad：pos3color4（两三角 6 顶点，像素坐标——Auto2d 正交解释）
-    x0, y0, x1, y1 = 150.0, 330.0, 650.0, 560.0
+    # 500×500 quad（pos3color4——颜色基色，圆盘形态/波纹全在 fragment）
+    x0, y0, x1, y1 = 150.0, 90.0, 650.0, 590.0
     verts = [
-        x0, y0, 0.0, 1.0, 0.25, 0.2, 1.0,
-        x1, y0, 0.0, 0.1, 0.9, 1.0, 1.0,
-        x1, y1, 0.0, 0.1, 0.9, 1.0, 0.4,
-        x0, y0, 0.0, 1.0, 0.25, 0.2, 1.0,
-        x1, y1, 0.0, 0.1, 0.9, 1.0, 0.4,
-        x0, y1, 0.0, 1.0, 0.25, 0.2, 0.4,
+        x0, y0, 0.0, 1.0, 1.0, 1.0, 1.0,
+        x1, y0, 0.0, 1.0, 1.0, 1.0, 1.0,
+        x1, y1, 0.0, 1.0, 1.0, 1.0, 1.0,
+        x0, y0, 0.0, 1.0, 1.0, 1.0, 1.0,
+        x1, y1, 0.0, 1.0, 1.0, 1.0, 1.0,
+        x0, y1, 0.0, 1.0, 1.0, 1.0, 1.0,
     ]
     mesh = ac.mesh("pos3color4", verts, label="demo_mesh")
     cam_buf = ac.buffer(64, label="demo_camera")
@@ -85,10 +91,10 @@ def game():
 
     frame = 0
     asserted = False
-    # 透视相机（3D 段）：世界居中后移 900（quad → 屏幕中央微缩）
+    # 透视相机（3D 段）：quad 中心平移到相机轴 + 后移 900（微缩居中）
     M = pygame.math
     cam3d = pygame.render.camera_perspective(0.9, 800.0 / 600.0, 0.1, 2000.0) \
-        .with_view(M.mat4_translation(-400.0, -445.0, -900.0))
+        .with_view(M.mat4_translation(-400.0, -340.0, -900.0))
     while True:
         for e in pygame.event.get():
             if e.type == pygame.event.QUIT:
@@ -102,18 +108,15 @@ def game():
             if frame == 0:
                 st("screen_attachment 帧内可取",
                    pygame.render.screen_attachment() is not None)
-            t.fill((16, 17, 24))
+            t.fill((14, 15, 22))
             t.blit(title, (14, 10))
-            t.rect(color=(120, 60, 60), rect=(140, 60, 520, 250), width=2)
-            t.rect(color=(60, 120, 160), rect=(140, 330, 520, 250), width=2)
-            # ── 段 1：Auto2d 正交（上半）——camera=cam_buf 会话托管 ──
+            # ── 段 1：Auto2d 正交——大波纹圆盘（camera=cam_buf 托管）──
             with t.raw_render(camera=cam_buf) as p:
                 p.set_pipeline(pipe)
                 p.set_bind_group(0, cam_bind)
                 p.set_mesh(mesh)
                 p.draw(0, 6)
-            # ── 段 2：切 3D 透视（下半）——同一 mesh 同一 cam_buf，
-            #    会话快照隔离：回放各自写入配对矩阵 ──
+            # ── 段 2：切 3D 透视——同一 mesh 同一 buf，会话快照隔离 ──
             pygame.render.set_camera(cam3d)
             with t.raw_render(camera=cam_buf) as p:
                 p.set_pipeline(pipe)
