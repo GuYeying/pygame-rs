@@ -20,14 +20,14 @@
 //! （rapier-starfish-debug）——Python 面独立 import，渲染挂接仍经
 //! pygame 会话的 draw_ui/draw_debug（Rust 内部协作，import 无耦合）。
 
-mod pygame;
+pub mod pygame;
 #[cfg(feature = "gui")]
-mod pygame_gui;
+pub mod pygame_gui;
 // pygame_physics = 双维度单模块（2D 类面 physics2d + 3D 类面 physics3d，
 // 3D 类带 3D 后缀）——任一维度 feature 开启即挂载
 #[cfg(any(feature = "physics2d", feature = "physics3d"))]
-mod pygame_physics;
-pub(crate) mod registry;
+pub mod pygame_physics;
+pub mod registry;
 pub mod args;
 pub mod bridge;
 pub mod smoke;

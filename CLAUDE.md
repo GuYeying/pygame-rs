@@ -996,3 +996,18 @@ Python 触达 Rust 的分层链（自上而下，单向）：
   - 实施路径 P1-P7（P1 pypg → P2 pgz L1 → P3 import 清单 → P4
     字节码 = 最小完整闭环）；三个开放问题（pip 生态不做/合集形态/
     动态 import 报错严格度）。
+- **批次 59 补 2（2026-10-25，实测修障 + 用户红线）**：
+  - **build.rs 栈参数目标盲区**（pypg/runner debug 构建 essential
+    init 炸的根因）：`rustc-link-arg-examples` 只覆盖 examples 目标
+    ——bins（pypg/pygame-runner）主线程栈默认 1MB，RP debug 引导
+    原生帧深撞线 → `essential initialization failed`（release 不炸
+    = margin 小故此前未暴露）。修：**双覆盖 bins+examples**；
+  - **SandboxStdio 定约确立**：rpy 去 host_env 下 RP 的 stdio 由
+    feature "stdio" 门控 = **SandboxStdio（Rust std::io 直通）**——
+    print/stderr 天然出控制台（Cargo.toml 已开，无需 wire 接线）；
+    pypg 曾试 io.open/textwrapper wire 接线全多余（RP _io 无 FileIO
+    类）——**setup_stdio/wire 整体删除**；
+  - **用户红线：RustPython vendored 代码零改动**（dependencies/
+    全程零 diff——本轮全部通过公开 API 外层接入，后续定约延续）；
+  - 验证：pypg -c/脚本/--game 三形态 + async_demo/mini_game dist
+    实跑全通（绿字标题 + 橙色矩形帧动画）。

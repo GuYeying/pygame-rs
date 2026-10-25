@@ -125,7 +125,7 @@ fn format_traceback(
     String::from_utf8_lossy(buf.get_ref()).trim_end().to_string()
 }
 
-/// 运行一个模块专项测试脚本（生成器门：脚本定义 `game()`，宿主持循环）
+/// 运行一个模块专项测试脚本（生成器门：脚本定义 `main()`，宿主持循环）
 ///
 /// - `script`：include 静态嵌入的 Python 脚本全文；
 /// - `tag`：日志前缀（如 "font_test"）；
@@ -289,5 +289,41 @@ def next_frame():
     display::quit();
     starfish_pygame::mixer::quit();
     dlog(tag, "main loop ended");
+    Ok(())
+}
+
+/// 运行任意 Python 脚本（**pypg 脚本直跑形态**——与 [`run`] 的游戏门
+/// 约束不同：不预置窗口、不要求 main 入口、无帧循环——脚本顶层同步
+/// 执行至结束；要游戏循环请用 `--game` 门或自建 while True[事件泵在
+/// `event.get` 内自动触发]）。
+///
+/// 脚本经 install_modules 装配原生 pygame 面——`import pygame` 即可。
+pub async fn run_script(script: &str, source_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let interp = crate::rpy::new_interpreter();
+    let err: RefCell<Option<String>> = RefCell::new(None);
+    interp.enter(|vm| {
+        let run = || -> Result<(), String> {
+            let scope = vm.new_scope_with_builtins();
+            crate::rpy::install_modules(vm);
+            let code = vm
+                .compile(
+                    script,
+                    rustpython_vm::compiler::Mode::Exec,
+                    source_name.to_string(),
+                )
+                .map_err(|e| format!("脚本编译异常:\n{e}"))?;
+            if let Err(e) = vm.run_code_obj(code, scope.clone()) {
+                return Err(format!("脚本执行异常:\n{}", format_traceback(vm, &e)));
+            }
+            Ok(())
+        };
+        if let Err(msg) = run() {
+            *err.borrow_mut() = Some(msg);
+        }
+    });
+    if let Some(msg) = err.into_inner() {
+        eprintln!("[pypg] {msg}");
+        return Err(msg.into());
+    }
     Ok(())
 }

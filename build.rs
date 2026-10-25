@@ -16,6 +16,9 @@ fn main() {
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     if os == "windows" && env == "msvc" {
+        // bins + examples 双覆盖（产品化批次：pypg/pygame-runner 为 bin
+        // 目标——原 examples 专属链接参数不覆盖 bin，debug 栈撞线）
+        println!("cargo:rustc-link-arg-bins=/STACK:16777216");
         println!("cargo:rustc-link-arg-examples=/STACK:16777216");
     }
 }
