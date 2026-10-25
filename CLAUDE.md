@@ -828,3 +828,12 @@ Python 触达 Rust 的分层链（自上而下，单向）：
     wasm custom_pipeline_demo/blit_transform_demo 重打包；
   - **渲染架构 A/B/C/D 全部收官**：全局相机定约 + blit_transform 单
     接口 + 中间面客人合成 + 调试线跟随 + 资源两入口 + raw_render。
+- **批次 54 补（2026-10-25，用户审查）**：raw_render 相机快照隔离——
+  `write_camera_mvp` 是即时 write_buffer，而 raw_render 命令延迟到收口
+  回放：同帧 2D/3D 相机切换 + 多 raw 会话共享同一 cam_buf 时互相覆盖
+  （egui 批次同款坑的 raw 版）。修复：`raw_render(camera=buf)` 会话
+  托管——收口时点快照全局 MVP、回放时先写 buf 再执行命令（快照模式
+  同 DeferredFrame）；write_camera_mvp 保留为即时形态（教学/单会话）。
+  custom_pipeline_demo 升级双会话验证：同一 mesh 同一 cam_buf 同帧
+  正交/透视两相机——盲验下半原位 quad（500×230）+ 中央微缩 quad
+  （340×160）同屏可辨。

@@ -2,12 +2,13 @@
 # 直绘会话——底层定制化全链路验证。
 # ① pygame.render.access() 两入口取资源工厂 → 自建 Shader/Mesh/
 #    BindGroup/Pipeline（安全收参：布局预设/枚举字符串）
-# ② 全局相机定约：group0/b0 = 64B 列主 mat4 MVP（write_camera_mvp
-#    帧内写入——与引擎管线同一约定）+ b1 time uniform 每帧更新
-#    （颜色呼吸动画 = 自定义 uniform 全链路生效证明）
-# ③ with t.raw_render() as p: 命令记录 → present 收口回放（恒在游戏
-#    内容之上）
-# 下半红框：自定义管线渐变 quad（红↔青呼吸）。
+# ② 全局相机定约：group0/b0 = 64B 列主 mat4 MVP——raw_render(camera=
+#    buf) 会话托管：收口快照、回放时写 buf（同帧 2D/3D 相机来回切、
+#    多 raw 会话共享同一 buf 各自配对——即时写+延迟回放覆盖根治）
+# ③ with t.raw_render(camera=cam_buf) as p: 命令记录 → 收口排程 →
+#    目标提交时点回放（恒在游戏内容之上）
+# 上半：正交 quad（原尺寸）；下半：透视 quad（同 mesh 同 buf，微缩
+# 偏移——两会话各自配对的可视证明）。
 import pygame
 
 WGSL = """
@@ -47,7 +48,7 @@ def game():
     screen = pygame.display.set_mode((800, 600))
     cjk = pygame.font.Font("cjk", 17)
     title = cjk.render(
-        "下半红框：自定义 WGSL 管线（raw_render + 相机定约 group0/b0=64B MVP + b1 time 呼吸）",
+        "红框内=正交原位 quad；中央微缩=同帧透视段（同 cam_buf，会话快照隔离）",
         True, (205, 205, 205))
     _fail = []
 
@@ -84,6 +85,10 @@ def game():
 
     frame = 0
     asserted = False
+    # 透视相机（3D 段）：世界居中后移 900（quad → 屏幕中央微缩）
+    M = pygame.math
+    cam3d = pygame.render.camera_perspective(0.9, 800.0 / 600.0, 0.1, 2000.0) \
+        .with_view(M.mat4_translation(-400.0, -445.0, -900.0))
     while True:
         for e in pygame.event.get():
             if e.type == pygame.event.QUIT:
@@ -91,8 +96,6 @@ def game():
             if e.type == pygame.event.KEYDOWN and e.key == pygame.key.K_ESCAPE:
                 return
 
-        # 相机定约（Auto2d 全局正交——draw 时点快照）+ time uniform 更新
-        pygame.render.write_camera_mvp(cam_buf)
         ac.write_buffer(time_buf, [frame / 60.0])
 
         with screen.render() as t:
@@ -101,20 +104,30 @@ def game():
                    pygame.render.screen_attachment() is not None)
             t.fill((16, 17, 24))
             t.blit(title, (14, 10))
-            t.rect(color=(120, 60, 60), rect=(140, 320, 520, 250), width=2)
-            # raw_render：命令记录，__exit__ 排程回放
-            p = t.raw_render()
-            with p:
+            t.rect(color=(120, 60, 60), rect=(140, 60, 520, 250), width=2)
+            t.rect(color=(60, 120, 160), rect=(140, 330, 520, 250), width=2)
+            # ── 段 1：Auto2d 正交（上半）——camera=cam_buf 会话托管 ──
+            with t.raw_render(camera=cam_buf) as p:
                 p.set_pipeline(pipe)
                 p.set_bind_group(0, cam_bind)
                 p.set_mesh(mesh)
                 p.draw(0, 6)
+            # ── 段 2：切 3D 透视（下半）——同一 mesh 同一 cam_buf，
+            #    会话快照隔离：回放各自写入配对矩阵 ──
+            pygame.render.set_camera(cam3d)
+            with t.raw_render(camera=cam_buf) as p:
+                p.set_pipeline(pipe)
+                p.set_bind_group(0, cam_bind)
+                p.set_mesh(mesh)
+                p.draw(0, 6)
+            pygame.render.reset_camera()
 
         pygame.display.flip()
         frame += 1
 
         if not asserted and frame == 60:
             st("raw_render 60 帧排程不抛", True)
+            st("帧尾相机状态回 auto2d", pygame.render.camera_state() == "auto2d")
             asserted = True
             print("[cp-demo] SUMMARY",
                   "PASS" if not _fail else "FAIL " + str(_fail))

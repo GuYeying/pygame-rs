@@ -334,9 +334,14 @@ pub mod pygame {
                     bool::try_from_borrowed_object(vm, o).ok()
                 })
                 .unwrap_or(false);
+            let camera = args.kwargs.get("camera").and_then(|o| {
+                o.downcast_ref::<crate::rpy::pygame::render::render::PyBuffer>()
+                    .map(|b| b.to_owned())
+            });
             crate::rpy::pygame::render::render::raw_pass(
                 depth,
                 Some(self.surface.clone()),
+                camera,
                 vm,
             )
         }
@@ -682,7 +687,11 @@ pub mod pygame {
                     bool::try_from_borrowed_object(vm, o).ok()
                 })
                 .unwrap_or(false);
-            crate::rpy::pygame::render::render::raw_pass(depth, None, vm)
+            let camera = args.kwargs.get("camera").and_then(|o| {
+                o.downcast_ref::<crate::rpy::pygame::render::render::PyBuffer>()
+                    .map(|b| b.to_owned())
+            });
+            crate::rpy::pygame::render::render::raw_pass(depth, None, camera, vm)
         }
 
         /// blit_area(src, dest, area, color=None)：UV 子区域贴图

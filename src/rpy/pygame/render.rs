@@ -718,6 +718,11 @@ pub(crate) mod render {
         depth: bool,
         /// None = 主屏（present 收口）；Some = 离屏面（flush 收口）
         surface: Option<std::sync::Arc<sf::Surface>>,
+        /// 会话相机 buffer（`raw_render(camera=buf)`）：收口时快照全局
+        /// MVP，**回放时**先写 buf 再执行命令——同帧多 raw 会话共享
+        /// 同一 buf 也各自配对正确（2D/3D 相机来回切换场景；快照模式
+        /// 同 egui DeferredFrame——即时 write_buffer + 延迟回放的覆盖坑）
+        camera: Option<PyRef<PyBuffer>>,
     }
 
     #[pyclass]
@@ -728,12 +733,28 @@ pub(crate) mod render {
         }
 
         /// 会话收口：命令排程到目标提交时点回放（登记序即执行序；
-        /// 恒在游戏内容之上——客人叠加定约，深度恒清 1.0）
+        /// 恒在游戏内容之上——客人叠加定约，深度恒清 1.0）。
+        /// camera buf 在**此收口时点**快照全局 MVP、**回放时**写入——
+        /// "draw 时刻的相机"精确语义（即时写 + 延迟回放的覆盖根治）。
         #[pymethod]
         fn __exit__(&self, _exc: rustpython_vm::function::FuncArgs, vm: &VirtualMachine) -> bool {
             let cmds = std::mem::take(&mut *self.cmds.borrow_mut());
             let depth = self.depth;
+            let camera = self.camera.clone();
+            // 相机快照（收口时点=用户画完命令时的全局状态）
+            let mvp_snap: Option<[f32; 16]> = camera.as_ref().map(|_buf| {
+                let size = match &self.surface {
+                    Some(s) => sf::DrawTarget::size(&**s),
+                    None => sf::DrawTarget::size(starfish_pygame::display::get_screen()),
+                };
+                sf::camera_mvp_for(size).to_cols_array()
+            });
             let replay = move |octx: &mut sf::OverlayCtx| {
+                // 回放时先写相机 buf（queue 序先于本闭包命令执行）
+                if let (Some(buf), Some(cols)) = (&camera, &mvp_snap) {
+                    let bytes: Vec<u8> = cols.iter().flat_map(|f| f.to_le_bytes()).collect();
+                    octx.queue().write_buffer(&buf.inner, 0, &bytes);
+                }
                 octx.with_pass("raw_render", depth, |pass| {
                     for c in &cmds {
                         match c {
@@ -818,6 +839,7 @@ pub(crate) mod render {
     pub(crate) fn raw_pass(
         depth: bool,
         surface: Option<std::sync::Arc<sf::Surface>>,
+        camera: Option<PyRef<PyBuffer>>,
         vm: &VirtualMachine,
     ) -> PyResult<PyRef<PyRawPass>> {
         if surface.is_none() {
@@ -831,6 +853,7 @@ pub(crate) mod render {
             cmds: std::cell::RefCell::new(Vec::new()),
             depth,
             surface,
+            camera,
         }
         .into_ref(&vm.ctx))
     }
