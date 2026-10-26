@@ -45,19 +45,24 @@ thread_local! {
     static FINDER_INSTALLED: RefCell<bool> = const { RefCell::new(false) };
 }
 
-/// 桌面扫描：递归收集 `root` 下全部 .py 进内存表。
-/// 名字映射 = 相对路径（`/` 分隔，点分名）；`__init__.py` → 包
-///（目录优先：同名 .py 与包并存时包胜——python 同语义）。
-/// 返回装载条数；目录不存在 = 0。
+/// 桌面扫描：递归收集 `root` 下全部 .py **并入现有表**（先到先得——
+/// 多根按 python sys.path 序传入，前面的根优先）。名字映射 = 相对路径
+///（`/` 分隔，点分名）；`__init__.py` → 包（目录优先：同名 .py 与包
+/// 并存时包胜——python 同语义）。返回本次新装载条数；目录不存在 = 0。
 #[cfg(not(target_arch = "wasm32"))]
 pub fn scan_module_dir(root: &str) -> usize {
-    let mut table = BTreeMap::new();
+    let mut fresh = BTreeMap::new();
     let root_path = std::path::Path::new(root);
     if root_path.is_dir() {
-        walk(root_path, "", "", &mut table);
+        walk(root_path, "", "", &mut fresh);
     }
-    let n = table.len();
-    TABLE.with(|t| *t.borrow_mut() = table);
+    let n = fresh.len();
+    TABLE.with(|t| {
+        let mut t = t.borrow_mut();
+        for (k, v) in fresh {
+            t.entry(k).or_insert(v);
+        }
+    });
     n
 }
 
@@ -218,10 +223,14 @@ _sys.meta_path.insert(0, SfFinder())
     Ok(())
 }
 
-/// 宿主入口：扫描 `dir`（相对 = main 所在目录，python 同语义）建表 +
-/// 注入 Finder。返回装载条数（0 = 目录缺失，不做任何注入）。
-pub fn install_module_finder(vm: &VirtualMachine, dir: &str) -> Result<usize, String> {
-    let n = scan_module_dir(dir);
+/// 宿主入口：按序扫描多根（先到先得——python sys.path 序：**main 所在
+/// 目录在前**，约定目录 `modules/` 次之）建表 + 注入 Finder。
+/// 返回装载条数（0 = 各根皆缺失，不做任何注入）。
+pub fn install_module_finder(vm: &VirtualMachine, dirs: &[&str]) -> Result<usize, String> {
+    let mut n = 0;
+    for dir in dirs {
+        n += scan_module_dir(dir);
+    }
     if n > 0 {
         ensure_finder(vm)?;
     }
