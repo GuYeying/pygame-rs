@@ -318,7 +318,7 @@ pub async fn run_script_in(
     script: &str,
     source_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = std::time::Instant::now();
+    let t0 = starfish_std::debug::Stopwatch::now();
     let err: RefCell<Option<String>> = RefCell::new(None);
     let gen_cell: RefCell<Option<rustpython_vm::PyObjectRef>> = RefCell::new(None);
     let errored = Cell::new(false);
@@ -373,7 +373,7 @@ def next_frame():
             }
             dlog(
                 source_name,
-                &format!("顶层执行完成（{}ms）", t0.elapsed().as_millis()),
+                &format!("顶层执行完成（{}ms）", t0.ms()),
             );
             // ── 入口自动探测：`async def main()` 协程 → 记入 gen_cell
             // 交外层驱动循环。同步 main 不代调、非函数名 main 忽略
@@ -412,20 +412,20 @@ def next_frame():
     }
     dlog(
         source_name,
-        &format!("装配段完成（+{}ms）——进入帧循环", t0.elapsed().as_millis()),
+        &format!("装配段完成（+{}ms）——进入帧循环", t0.ms()),
     );
 
     // ── 帧驱动循环（与 testhost::run 同构）：事件泵 → 协程 send 步进
     // → StopIteration 正常收尾 → 帧拍。首帧打点 = 启动诊断仪表。
     let mut first_frame = true;
     loop {
-        let seg_pump = std::time::Instant::now();
+        let seg_pump = starfish_std::debug::Stopwatch::now();
         if starfish_pygame::event::pump() {
             dlog("pygame-rs-dev", "退出请求，结束");
             break;
         }
-        let ms_pump = seg_pump.elapsed().as_millis();
-        let seg_send = std::time::Instant::now();
+        let ms_pump = seg_pump.ms();
+        let seg_send = starfish_std::debug::Stopwatch::now();
         let mut done = false;
         interp.enter(|vm| {
             let borrowed = gen_cell.borrow();
@@ -463,8 +463,8 @@ def next_frame():
                 &format!(
                     "首帧分段: pump={}ms send+收尾={}ms（累计 +{}ms）",
                     ms_pump,
-                    seg_send.elapsed().as_millis(),
-                    t0.elapsed().as_millis()
+                    seg_send.ms(),
+                    t0.ms()
                 ),
             );
         }
