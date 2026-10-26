@@ -294,13 +294,13 @@ def next_frame():
     Ok(())
 }
 
-/// 运行任意 Python 脚本（**pypg 脚本直跑形态**——与 [`run`] 的游戏门
+/// 运行任意 Python 脚本（**pygame_runtime 脚本直跑形态**——与 [`run`] 的游戏门
 /// 同构的完整驱动）。自建解释器后转交 [`run_script_in`]。
 pub async fn run_script(script: &str, source_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     run_script_in(crate::rpy::new_interpreter(), script, source_name).await
 }
 
-/// [`run_script`] 的**解释器外置版**（pypg 用）：解释器由调用方装配并
+/// [`run_script`] 的**解释器外置版**（pygame_runtime 用）：解释器由调用方装配并
 /// 持有——genesis / sys.argv 接线等启动段可先行于建窗完成（控制台
 /// 阶段先行，窗口出现即进入脚本执行）。
 ///
@@ -421,7 +421,7 @@ def next_frame():
     loop {
         let seg_pump = std::time::Instant::now();
         if starfish_pygame::event::pump() {
-            dlog("pypg", "退出请求，结束");
+            dlog("pygame_runtime", "退出请求，结束");
             break;
         }
         let ms_pump = seg_pump.elapsed().as_millis();
@@ -439,11 +439,11 @@ def next_frame():
                     let obj: rustpython_vm::PyObjectRef = exc.clone().into();
                     let cls = obj.class().name().to_string();
                     if cls == "StopIteration" {
-                        dlog("pypg", "main 协程完成");
+                        dlog("pygame_runtime", "main 协程完成");
                     } else {
                         errored.set(true);
                         dlog(
-                            "pypg",
+                            "pygame_runtime",
                             &format!("脚本异常:\n{}", format_traceback(vm, &exc)),
                         );
                     }
@@ -459,7 +459,7 @@ def next_frame():
         if first_frame {
             first_frame = false;
             dlog(
-                "pypg",
+                "pygame_runtime",
                 &format!(
                     "首帧分段: pump={}ms send+收尾={}ms（累计 +{}ms）",
                     ms_pump,
