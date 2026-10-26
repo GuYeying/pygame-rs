@@ -71,7 +71,7 @@ use std::cell::Cell;
         #[pyfunction]
         fn set_mode(args: SetModeArgs, vm: &VirtualMachine) -> PyResult<PyRef<PyScreen>> {
             // 启动诊断（单行打点：脚本 set_mode 的落地耗时）
-            let t = std::time::Instant::now();
+            let t = starfish_std::debug::Stopwatch::now();
             // 完整窗口请求（批次 O + 尺寸扩展）：尺寸跟随（set_size）+
             // 旗标运行时生效（apply_window_request）
             let bits = match &args.flags {
@@ -88,7 +88,7 @@ use std::cell::Cell;
             );
             bridge::devlog(&format!(
                 "[set_mode] 落地 {}ms",
-                t.elapsed().as_millis()
+                t.ms()
             ));
             Ok(PyScreen.into_ref(&vm.ctx))
         }
