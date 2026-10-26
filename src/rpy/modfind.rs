@@ -98,7 +98,12 @@ fn walk(dir: &std::path::Path, path_prefix: &str, dot_prefix: &str, out: &mut BT
         }
         let path = entry.path();
         if path.is_dir() {
-            // 包目录：内含 __init__.py 才登记为包
+            // 目录一律登记为包（python PEP 420 同语义）：无 __init__ =
+            // 命名空间包（空源），有 __init__ = 实包（源覆盖空源）
+            out.insert(
+                format!("{dot_prefix}{name}"),
+                (format!("{path_prefix}{name}"), String::new(), true),
+            );
             let init = path.join("__init__.py");
             if init.is_file() {
                 if let Ok(src) = std::fs::read_to_string(&init) {
