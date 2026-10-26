@@ -97,19 +97,9 @@ use std::cell::Cell;
                     .map_err(|e| vm.new_value_error(format!("io 写入失败: {e}")))
             }
         }
-
-        /// set_base_dir(dir)：相对路径基准目录（覆盖写；Android 由引擎自动
-        /// 注入应用私有目录，一般无需手动调）
-        #[pyfunction]
-        fn set_base_dir(dir: PyStrRef, vm: &VirtualMachine) -> PyResult<()> {
-            #[cfg(target_arch = "wasm32")]
-            return Err(vm.new_value_error("pygame.io: Web 端基准 = URL 前缀，无同步设置面"));
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                starfish_io::set_base_dir(path_str(&dir, vm)?);
-                Ok(())
-            }
-        }
+        // set_base_dir 不暴露（2026-10-26 定约）：基准目录 = 引擎内部
+        // 语义（Android 自动注入），Python 面恒以 main 所在目录为基准
+        // 写相对路径——打包形态不改写调用写法
     }
 
     // ── net：网络（批次 M；轮询式语义——帧内 send/recv，主线程永不阻塞）──

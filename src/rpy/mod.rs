@@ -30,6 +30,7 @@ pub mod pygame_physics;
 pub mod registry;
 pub mod args;
 pub mod bridge;
+pub mod modfind;
 pub mod smoke;
 pub mod testhost;
 
@@ -59,5 +60,7 @@ pub fn new_interpreter() -> Interpreter {
 pub fn install_modules(vm: &rustpython_vm::VirtualMachine) {
     registry::install(vm);
 }
+
+pub use modfind::{install_module_finder, install_module_finder_with_table};
 
 pub use smoke::run_smoke;
