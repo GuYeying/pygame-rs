@@ -297,17 +297,12 @@ def next_frame():
 /// 运行任意 Python 脚本（**pypg 脚本直跑形态**——与 [`run`] 的游戏门
 /// 同构的完整驱动）。自建解释器后转交 [`run_script_in`]。
 pub async fn run_script(script: &str, source_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    run_script_in(crate::rpy::new_interpreter(), script, source_name, false).await
+    run_script_in(crate::rpy::new_interpreter(), script, source_name).await
 }
 
 /// [`run_script`] 的**解释器外置版**（pypg 用）：解释器由调用方装配并
-/// 持有——genesis / sys.argv 接线等启动段可先行于建窗完成。
-///
-/// `show_on_first_frame`（pypg 白窗根治，2026-10-26 用户实测定位）：
-/// pypg 以 HIDDEN 建窗——**首次 present 完成才显示窗口**。首次 present
-/// 背负管线创建 + DX12 驱动 shader JIT（驱动缓存冷 = 秒级、按构建批
-/// 概率出现——既往"白窗干等"的真身）；隐藏承载后，窗口出现的下一刻
-/// 内容已在屏上。false = 不接管显示（窗口自始可见/-c 无窗）。
+/// 持有——genesis / sys.argv 接线等启动段可先行于建窗完成（控制台
+/// 阶段先行，窗口出现即进入脚本执行）。
 ///
 /// 流程：帧桥注入 → 顶层执行 → 入口自动探测（`async def main():` 协程
 /// → 帧循环驱动；无 main / 同步 main / 非函数 main = 顶层执行完即收
@@ -315,11 +310,13 @@ pub async fn run_script(script: &str, source_name: &str) -> Result<(), Box<dyn s
 /// 编译错 = SyntaxError 经典 traceback（与 [`run`] 同款诊断）；
 /// 运行期异常（帧循环内）= 打印 traceback 后返回 Err（调用方据此置
 /// 退出码 1，python 同语义）。
+/// 首帧打点（"装配段→首帧"耗时）常开——启动诊断仪表；可见性不做
+/// 任何刻意安排（2026-10-26 用户定夺：白窗已短暂，HIDDEN+首帧后显示
+/// 的机制不跨平台，退役）。
 pub async fn run_script_in(
     interp: rustpython_vm::Interpreter,
     script: &str,
     source_name: &str,
-    show_on_first_frame: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let t0 = std::time::Instant::now();
     let err: RefCell<Option<String>> = RefCell::new(None);
@@ -419,11 +416,8 @@ def next_frame():
     );
 
     // ── 帧驱动循环（与 testhost::run 同构）：事件泵 → 协程 send 步进
-    // → StopIteration 正常收尾 → 帧拍。首帧分段打点（pump/send/收尾
-    // ——白窗 7s 级延迟的归因仪表，2026-10-26）+ 首帧后显示（pypg
-    // 白窗根治：首次 present 完成才让窗口可见——见函数头注释）。
+    // → StopIteration 正常收尾 → 帧拍。首帧打点 = 启动诊断仪表。
     let mut first_frame = true;
-    let show_win = || display::with_window(|w| w.set_visible(true));
     loop {
         let seg_pump = std::time::Instant::now();
         if starfish_pygame::event::pump() {
@@ -464,30 +458,18 @@ def next_frame():
         next_frame().await;
         if first_frame {
             first_frame = false;
-            if show_on_first_frame {
-                show_win();
-            }
             dlog(
                 "pypg",
                 &format!(
-                    "首帧分段: pump={}ms send+收尾={}ms（累计 +{}ms）{}",
+                    "首帧分段: pump={}ms send+收尾={}ms（累计 +{}ms）",
                     ms_pump,
                     seg_send.elapsed().as_millis(),
-                    t0.elapsed().as_millis(),
-                    if show_on_first_frame { "，窗口显示" } else { "" },
+                    t0.elapsed().as_millis()
                 ),
             );
         }
     }
-    if show_on_first_frame && first_frame {
-        // 无协程（纯脚本形态）：无帧可等——完成时补显示（与"脚本形态
-        // 预建渲染窗"的约定一致；-c 走 false 不受影响）
-        show_win();
-        dlog(
-            "pypg",
-            &format!("脚本完成（+{}ms），窗口显示", t0.elapsed().as_millis()),
-        );
-    }
+    // 无协程（纯脚本形态）：顶层执行完即收（python 语义）
     // 先关窗再收口（与 run 同约——RP 活动期间窗口 ghost 防御）
     display::quit();
     starfish_pygame::mixer::quit();
