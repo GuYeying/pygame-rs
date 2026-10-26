@@ -269,8 +269,8 @@ expect(abs(v2.length() - 5.0) < 1e-6, "Vector2.length")
 n = v2.normalize()
 expect(abs(n.x - 0.6) < 1e-6 and abs(n.y - 0.8) < 1e-6, "Vector2.normalize")
 expect(abs(v2.dot(pygame.math.Vector2(1, 0)) - 3.0) < 1e-6, "Vector2.dot")
-expect(pygame.version.ver == "0.9.55", "version.ver")
-expect(pygame.version.get_version() == (0, 9, 55), "version.vernum")
+expect(pygame.version.ver == "0.9.56", "version.ver")  # 随 starfish workspace 版本联动更新
+expect(pygame.version.get_version() == (0, 9, 56), "version.vernum")
 #expect(pygame.version.get_wgpu_version() == (2, 0, 20), "version.get_sdl_version 占位")
 
 for status, msg in RESULTS:

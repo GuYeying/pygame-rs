@@ -16,9 +16,8 @@ fn main() {
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     if os == "windows" && env == "msvc" {
-        // bins + examples 双覆盖（产品化批次：pypg/pygame-runner 为 bin
-        // 目标——原 examples 专属链接参数不覆盖 bin，debug 栈撞线）
-        println!("cargo:rustc-link-arg-bins=/STACK:16777216");
+        // examples 档（bin 退役后仅存——RP 引导/debug 栈撞线的根治参数；
+        // bins 行随 bin 模块退役移除，rustc-link-arg-bins 对无 bin 包报错）
         println!("cargo:rustc-link-arg-examples=/STACK:16777216");
     }
 }
