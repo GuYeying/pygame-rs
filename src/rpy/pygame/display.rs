@@ -70,20 +70,26 @@ use std::cell::Cell;
 
         #[pyfunction]
         fn set_mode(args: SetModeArgs, vm: &VirtualMachine) -> PyResult<PyRef<PyScreen>> {
-            bridge::devlog(&format!(
-                "[pygame] display.set_mode 需求 {:?}（真身由宿主壳装配）",
-                (args.size.0, args.size.1)
-            ));
+            // 启动诊断（单行打点：脚本 set_mode 的落地耗时）
+            let t = std::time::Instant::now();
             // 完整窗口请求（批次 O + 尺寸扩展）：尺寸跟随（set_size）+
             // 旗标运行时生效（apply_window_request）
             let bits = match &args.flags {
                 Some(f) => flags_bits(f, vm)?,
                 None => 0,
             };
+            bridge::devlog(&format!(
+                "[pygame] display.set_mode {:?} 旗标 {bits:#b}（真身由宿主壳装配）",
+                (args.size.0, args.size.1)
+            ));
             starfish_pygame::display::apply_window_request(
                 (args.size.0.max(0) as u32, args.size.1.max(0) as u32),
                 bits,
             );
+            bridge::devlog(&format!(
+                "[set_mode] 落地 {}ms",
+                t.elapsed().as_millis()
+            ));
             Ok(PyScreen.into_ref(&vm.ctx))
         }
 

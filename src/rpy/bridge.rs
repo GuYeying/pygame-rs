@@ -58,22 +58,32 @@ use starfish_audio::{AudioMixer, SoundData};
 use starfish_pygame::render::{BatchTopology, GeometryKind};
 use starfish_pygame::render::RenderPass;
 
-/// 诊断日志（println + console_log + 文件 + TCP；与宿主壳 dlog 同构）。
-/// 文件路径与 binding_probe 的 LOG_PATH 保持一致。
+/// 诊断日志（console_log 单路输出 + Android 文件/TCP；与宿主壳 dlog 同构）。
 /// Android TCP 排障通道仅 debug 构建生效（connect_timeout 300ms +
 /// 一次失败即拉黑——无超时阻塞 connect 在主线程 = ANR，2026-09-28 实测坑）；
 /// 目标机 IP 按当次真机环境改 [`DEVLOG_TCP_TARGET`]。
 pub fn devlog(msg: &str) {
-    println!("{}", msg);
+    // 桌面 = console_log 单路输出（println 双写已退役，2026-10-26）；
+    // >200ms 慢调用哨兵保留（当年 /sdcard 未门控在 Windows 触发
+    // UNC 解析 7s 级超时——"白窗干等"的真身，防复发）
+    let t = std::time::Instant::now();
     starfish_std::debug::console_log(msg);
-    const LOG_PATH: &str = "/sdcard/Download/bp_log.txt";
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(LOG_PATH)
+    let a = t.elapsed().as_millis();
+    #[cfg(target_os = "android")]
     {
-        use std::io::Write;
-        let _ = writeln!(f, "{}", msg);
+        const LOG_PATH: &str = "/sdcard/Download/bp_log.txt";
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(LOG_PATH)
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "{}", msg);
+        }
+    }
+    let b = t.elapsed().as_millis();
+    if a > 200 || b > 200 {
+        eprintln!("[devlog 慢调用哨兵] console={a}ms file段={b}ms");
     }
     #[cfg(all(target_os = "android", debug_assertions))]
     {
