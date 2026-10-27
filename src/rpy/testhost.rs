@@ -245,7 +245,8 @@ def next_frame():
     // 主循环（调用方持）：事件泵 → Python 帧步进 → 上屏 → 帧拍
     dlog(tag, "entering frame loop");
     loop {
-        if starfish_pygame::event::pump() {
+        if starfish_pygame::event::pump() || starfish_std::run_control::stop_requested() {
+            starfish_std::debug::console_log("[host] 嵌入式停止信号命中——帧循环收口");
             dlog(tag, "退出请求，结束");
             break;
         }
@@ -420,7 +421,10 @@ def next_frame():
     let mut first_frame = true;
     loop {
         let seg_pump = starfish_std::debug::Stopwatch::now();
-        if starfish_pygame::event::pump() {
+        if starfish_pygame::event::pump() || starfish_std::run_control::stop_requested() {
+            if starfish_std::run_control::stop_requested() {
+                starfish_std::debug::console_log("[host] 嵌入式停止信号命中——帧循环收口");
+            }
             dlog("pygame-rs-dev", "退出请求，结束");
             break;
         }
