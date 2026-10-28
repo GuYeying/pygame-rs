@@ -160,6 +160,19 @@ pub(crate) mod render {
         PyMat4(std::cell::Cell::new(sf::camera_mvp())).into_ref(&vm.ctx)
     }
 
+    /// 呈现拟合矩阵（NDC 域 clip 空间仿射）——**自管相机的 letterbox
+    /// 对齐口**：write_buffer 直写矩阵的自绘管线，引擎无法拦截组合，
+    /// 脚本自行左乘即与主绘制同一映射
+    ///（`present_fit().mul_mat4(自管相机.mvp())`）。桌面/全屏恒等，
+    /// Android 窗口化把自绘内容收进居中画布
+    #[pyfunction]
+    fn present_fit(vm: &VirtualMachine) -> PyRef<PyMat4> {
+        PyMat4(std::cell::Cell::new(
+            starfish_pygame::display::get_screen().present_fit(),
+        ))
+        .into_ref(&vm.ctx)
+    }
+
     /// 当前相机状态（"auto2d" | "auto3d" | "manual"）。
     #[pyfunction]
     fn camera_state() -> String {
