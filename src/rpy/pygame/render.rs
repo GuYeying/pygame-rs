@@ -786,14 +786,20 @@ pub(crate) mod render {
         starfish_pygame::display::get_screen().sample_count()
     }
 
-    /// write_camera_mvp(buf)：全局相机 MVP（列主 16 float）写入 Buffer
-    /// ——**全局相机定约**（group0/b0 = 64B mat4）；draw 时点解算
-    ///（帧内快照语义，同帧多相机配对正确）。取 present_mvp（与主绘制
-    /// 同一映射：逻辑画布域相机 + letterbox 拟合统一组合——自绘内容
-    /// 与游戏内容全平台对齐）
+    /// write_camera_mvp(buf[, cam_mvp])：矩阵（列主 16 float）写入
+    /// Buffer——**自绘管线在设置相机处的引擎侧 letterbox 插入点**
+    ///（group0/b0 = 64B mat4 定约）。两形态：
+    /// · 单参 = 全局相机 MVP（present_mvp，帧内快照语义）；
+    /// · 双参 = 自管相机矩阵（如 camera_ortho/perspective 的 .mvp()）
+    ///   ——引擎自动左乘呈现拟合收进画布（脚本零矩阵知识；桌面/全屏
+    ///   恒等，Android 窗口化与主绘制/UI/物理调试线同一映射）。
     #[pyfunction]
-    fn write_camera_mvp(buf: PyRef<PyBuffer>) {
-        let m = starfish_pygame::display::get_screen().present_mvp();
+    fn write_camera_mvp(buf: PyRef<PyBuffer>, cam_mvp: Option<PyRef<PyMat4>>) {
+        let screen = starfish_pygame::display::get_screen();
+        let m = match cam_mvp {
+            Some(cm) => screen.present_fit() * cm.0.get(),
+            None => screen.present_mvp(),
+        };
         let bytes: Vec<u8> = m
             .to_cols_array()
             .iter()
