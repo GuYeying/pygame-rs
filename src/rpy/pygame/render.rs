@@ -775,11 +775,12 @@ pub(crate) mod render {
 
     /// write_camera_mvp(buf)：全局相机 MVP（列主 16 float）写入 Buffer
     /// ——**全局相机定约**（group0/b0 = 64B mat4）；draw 时点解算
-    ///（帧内快照语义，同帧多相机配对正确）。
+    ///（帧内快照语义，同帧多相机配对正确）。取 present_mvp（与主绘制
+    /// 同一映射：逻辑画布域相机 + letterbox 拟合统一组合——自绘内容
+    /// 与游戏内容全平台对齐）
     #[pyfunction]
     fn write_camera_mvp(buf: PyRef<PyBuffer>) {
-        let size = sf::DrawTarget::size(starfish_pygame::display::get_screen());
-        let m = sf::camera_mvp_for(size);
+        let m = starfish_pygame::display::get_screen().present_mvp();
         let bytes: Vec<u8> = m
             .to_cols_array()
             .iter()

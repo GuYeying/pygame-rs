@@ -740,7 +740,17 @@ pub(crate) fn draw_debug_3d(
     let gpu = starfish_pygame::render::gpu_info().ok_or_else(|| {
         vm.new_runtime_error("GPU 未就绪：须在 pygame.display.set_mode 之后调用")
     })?;
-    draw_debug_3d_generic(renderer, sink, samples, size, false, &gpu, |boxed| {
+    draw_debug_3d_generic(
+        renderer,
+        sink,
+        samples,
+        size,
+        // 全局跟随 MVP 与主绘制同一映射（present_mvp：逻辑画布域相机 +
+        // letterbox 拟合统一组合——Auto 恒等、Manual 不再物理域双映射）
+        screen.present_mvp().to_cols_array_2d(),
+        false,
+        &gpu,
+        |boxed| {
         starfish_pygame::render::session::with_screen(|pass| {
             pass.defer_overlay(boxed);
         })
@@ -766,6 +776,11 @@ pub(crate) fn draw_debug_3d_on_surface(
         sink,
         1, // 离屏：无 MSAA
         starfish_pygame::render::DrawTarget::size(surface),
+        // 离屏面无 letterbox（逻辑==物理）——全局相机按表面尺寸解算
+        starfish_pygame::render::camera_mvp_for(
+            starfish_pygame::render::DrawTarget::size(surface),
+        )
+        .to_cols_array_2d(),
         true, // 离屏目标：管线按 Rgba8Unorm 离屏 access 建
         &gpu,
         |boxed| surface.defer_overlay(boxed),
@@ -783,6 +798,7 @@ fn draw_debug_3d_generic(
     sink: PyRef<PyLineSink3D>,
     samples: u32,
     size: (u32, u32),
+    follow_mvp: [[f32; 4]; 4],
     offscreen: bool,
     gpu: &starfish_pygame::render::GpuInfo,
     schedule: impl FnOnce(Box<dyn FnOnce(&mut starfish_pygame::render::OverlayCtx) + 'static>),
@@ -814,12 +830,9 @@ fn draw_debug_3d_generic(
         let st = &mut slot.1;
         let camera = renderer.camera.borrow();
         if renderer.follow_global.get() {
-            // 全局相机跟随（批次 B）：每帧同步引擎全局 MVP（Manual 用户
-            // override / Auto 按目标尺寸——set_camera 一处设置全体生效）
-            st.renderer.set_camera_mvp(
-                &st.access,
-                starfish_pygame::render::camera_mvp_for(size).to_cols_array_2d(),
-            );
+            // 全局相机跟随（批次 B）：每帧同步引擎全局 MVP（调用方按
+            // 目标传入——Screen = present_mvp，与主绘制同一映射）
+            st.renderer.set_camera_mvp(&st.access, follow_mvp);
             st.viewport = size;
             st.camera_epoch = renderer.camera_epoch.get();
         } else if st.viewport != size || st.camera_epoch != renderer.camera_epoch.get() {

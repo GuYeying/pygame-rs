@@ -463,7 +463,7 @@ pub mod pygame {
         /// canvas 下跟随页面布局变化——脚本查询用）
         #[pymethod]
         fn get_size(&self) -> (u32, u32) {
-            starfish_pygame::display::get_screen().size()
+            starfish_pygame::display::get_screen().logical_size()
         }
 
         /// render_depth() -> Session：**深度会话**（绘制走深度测试管线，

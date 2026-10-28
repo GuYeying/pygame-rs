@@ -423,14 +423,17 @@ pub(crate) fn draw_ui(vm: &VirtualMachine, panel: PyObjectRef) -> PyResult<()> {
         vm.new_type_error("draw_ui 须在 `with screen.render():` 会话块内调用（t = 会话对象）")
     })?;
     let screen = starfish_pygame::display::get_screen();
-    let (w, h) = starfish_pygame::display::with_window(|win| win.size()).unwrap_or((0, 0));
+    // screen_rect = 逻辑画布（set_mode 语义尺寸）——egui 与游戏内容同一
+    // 坐标系（Android 嵌入下物理恒原生窗口，取窗口会让布局与命中分家）
+    let (w, h) = screen.logical_size();
     let mut raw = take_raw_input(&rc, vm)?;
     raw.screen_rect = Some(egui::Rect::from_min_size(
         egui::Pos2::ZERO,
         egui::vec2(w as f32, h as f32),
     ));
     let key: RendererKey = (screen.color_format(), screen.sample_count());
-    draw_ui_generic(vm, rc, panel, raw, key, |boxed| {
+    let compose_mvp = screen.present_mvp().to_cols_array_2d();
+    draw_ui_generic(vm, rc, panel, raw, key, compose_mvp, |boxed| {
         starfish_pygame::render::session::with_screen(|pass| {
             pass.defer_overlay(boxed);
         })
@@ -470,7 +473,13 @@ pub(crate) fn draw_ui_on_surface(
     // 离屏目标恒 Rgba8Unorm 无 MSAA（Surface/Texture 纹理定约）——与
     // 主屏交换链格式（随平台漂移）分槽持管线
     let key: RendererKey = (egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, 1);
-    draw_ui_generic(vm, rc, panel, raw, key, |boxed| surface.defer_overlay(boxed))
+    let compose_mvp = starfish_pygame::render::camera_mvp_for(
+        starfish_pygame::render::DrawTarget::size(surface),
+    )
+    .to_cols_array_2d();
+    draw_ui_generic(vm, rc, panel, raw, key, compose_mvp, |boxed| {
+        surface.defer_overlay(boxed)
+    })
 }
 
 /// draw_ui 本体（调度泛化，批次 48）：构建 0.37 全管线帧 → 经 schedule
@@ -482,6 +491,7 @@ fn draw_ui_generic(
     panel: PyObjectRef,
     raw: egui::RawInput,
     key: RendererKey,
+    compose_mvp: [[f32; 4]; 4],
     schedule: impl FnOnce(
         Box<dyn FnOnce(&mut starfish_pygame::render::OverlayCtx) + 'static>,
     ),
@@ -501,7 +511,7 @@ fn draw_ui_generic(
             pixels_per_point: output.pixels_per_point,
         },
         // 排程时点快照全局相机（同帧多次 set_camera 的时序正确性）
-        compose_mvp: starfish_pygame::render::camera_mvp_for((w, h)).to_cols_array_2d(),
+        compose_mvp,
         output: Some(output),
         jobs,
     };

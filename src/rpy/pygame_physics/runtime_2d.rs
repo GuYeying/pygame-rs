@@ -700,6 +700,9 @@ pub(crate) fn draw_debug(
         sink,
         samples,
         size,
+        // 全局跟随 MVP 与主绘制同一映射（present_mvp：逻辑画布域相机 +
+        // letterbox 拟合统一组合——Auto 恒等、Manual 不再物理域双映射）
+        screen.present_mvp().to_cols_array_2d(),
         false,
         &gpu,
         |boxed| {
@@ -728,6 +731,11 @@ pub(crate) fn draw_debug_on_surface(
         sink,
         1, // 离屏：无 MSAA
         starfish_pygame::render::DrawTarget::size(surface),
+        // 离屏面无 letterbox（逻辑==物理）——全局相机按表面尺寸解算
+        starfish_pygame::render::camera_mvp_for(
+            starfish_pygame::render::DrawTarget::size(surface),
+        )
+        .to_cols_array_2d(),
         true, // 离屏目标：管线按 Rgba8Unorm 离屏 access 建
         &gpu,
         |boxed| surface.defer_overlay(boxed),
@@ -744,6 +752,7 @@ fn draw_debug_generic(
     sink: PyRef<PyLineSink>,
     samples: u32,
     size: (u32, u32),
+    follow_mvp: [[f32; 4]; 4],
     offscreen: bool,
     gpu: &starfish_pygame::render::GpuInfo,
     schedule: impl FnOnce(Box<dyn FnOnce(&mut starfish_pygame::render::OverlayCtx) + 'static>),
@@ -772,11 +781,9 @@ fn draw_debug_generic(
         };
         let st = &mut slot.1;
         if renderer.follow_global.get() {
-            // 全局相机跟随（批次 B）：每帧同步引擎全局 MVP
-            st.renderer.set_camera_mvp(
-                &st.access,
-                starfish_pygame::render::camera_mvp_for(size).to_cols_array_2d(),
-            );
+            // 全局相机跟随（批次 B）：每帧同步引擎全局 MVP（调用方按
+            // 目标传入——Screen = present_mvp，与主绘制同一映射）
+            st.renderer.set_camera_mvp(&st.access, follow_mvp);
             st.viewport = size;
         } else if st.viewport != size {
             st.renderer
