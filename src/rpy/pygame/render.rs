@@ -797,7 +797,26 @@ pub(crate) mod render {
     fn write_camera_mvp(buf: PyRef<PyBuffer>, cam_mvp: Option<PyRef<PyMat4>>) {
         let screen = starfish_pygame::display::get_screen();
         let m = match cam_mvp {
-            Some(cm) => screen.present_fit() * cm.0.get(),
+            Some(cm) => {
+                let fit = screen.present_fit();
+                let composed = fit * cm.0.get();
+                // 一次性诊断（Android letterbox 判定）：拟合四要素 +
+                // 脚本相机平移列 + 合成结果——"组合是否落进 buffer"
+                // 一眼可判（sx/sy 应 = 画布占屏比，恒等应 = 1/1）
+                static DIAG: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !DIAG.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    let f = fit.to_cols_array();
+                    let c = cm.0.get().to_cols_array();
+                    let r = composed.to_cols_array();
+                    starfish_std::debug::console_log(&format!(
+                        "[wcmvp] fit sx={:.4} sy={:.4} tx={:.4} ty={:.4} | cam平移=({:.1},{:.1}) | 合成平移=({:.1},{:.1}) 合成sx={:.4}",
+                        f[0], f[5], f[12], f[13], c[12], c[13],
+                        r[12], r[13], r[0],
+                    ));
+                }
+                composed
+            }
             None => screen.present_mvp(),
         };
         let bytes: Vec<u8> = m
