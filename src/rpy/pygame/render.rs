@@ -344,8 +344,8 @@ pub(crate) mod render {
         label: Option<String>,
     }
 
-    /// access.pipeline(shader, mesh, bind_groups, topo="triangles",
-    /// cull="none", depth=False, label=None)
+    /// access.pipeline(shader, mesh, bind_groups, flavor="2d",
+    /// topo="triangles", cull="none", depth=False, label=None)
     #[derive(FromArgs)]
     pub(crate) struct PipelineArgs {
         #[pyarg(any)]
@@ -354,12 +354,61 @@ pub(crate) mod render {
         mesh: PyRef<PyMesh>,
         #[pyarg(any)]
         bind_groups: PyObjectRef,
+        /// flavor = "2d"（默认，builder_2d）| "3d"（builder_3d）——builder
+        /// 家族选择（topo/cull/depth 仍可逐项覆盖）
+        #[pyarg(any, optional)]
+        flavor: Option<String>,
         #[pyarg(any, optional)]
         topo: Option<String>,
         #[pyarg(any, optional)]
         cull: Option<String>,
         #[pyarg(any, optional)]
         depth: Option<bool>,
+        #[pyarg(any, optional)]
+        label: Option<String>,
+    }
+
+    /// access.compute_pipeline(shader, bind_groups, entry="cs_main",
+    /// label=None)
+    #[derive(FromArgs)]
+    pub(crate) struct ComputePipelineArgs {
+        #[pyarg(any)]
+        shader: PyRef<PyShader>,
+        #[pyarg(any)]
+        bind_groups: PyObjectRef,
+        #[pyarg(any, optional)]
+        entry: Option<String>,
+        #[pyarg(any, optional)]
+        label: Option<String>,
+    }
+
+    /// access.sampler(mag="linear", min="linear", mipmap="linear",
+    /// address="clamp", label=None)——四组字符串安全收参；address 同时
+    /// 应用 u/v/w
+    #[derive(FromArgs)]
+    pub(crate) struct SamplerArgs {
+        #[pyarg(any, optional)]
+        mag: Option<String>,
+        #[pyarg(any, optional)]
+        min: Option<String>,
+        #[pyarg(any, optional)]
+        mipmap: Option<String>,
+        #[pyarg(any, optional)]
+        address: Option<String>,
+        #[pyarg(any, optional)]
+        label: Option<String>,
+    }
+
+    /// access.texture(size=(w,h), rgba=None, kind="sampled", label=None)
+    #[derive(FromArgs)]
+    pub(crate) struct TextureArgs {
+        #[pyarg(any)]
+        size: PyObjectRef,
+        /// RGBA8 字节列表（w×h×4，0..=255）；None = 零填充
+        #[pyarg(any, optional)]
+        rgba: Option<PyObjectRef>,
+        #[pyarg(any, optional)]
+        kind: Option<String>,
         #[pyarg(any, optional)]
         label: Option<String>,
     }
@@ -396,6 +445,45 @@ pub(crate) mod render {
             "pos3color4" => 7,
             "pos3uv2color4" => 9,
             _ => 0,
+        }
+    }
+
+    /// (w, h) 二元组提取（texture size 收参）
+    fn parse_size_2d(obj: &PyObjectRef, vm: &VirtualMachine) -> PyResult<(u32, u32)> {
+        let elems: Vec<PyObjectRef> = vm.extract_elements_with(obj, |o| Ok(o.to_owned()))?;
+        if elems.len() != 2 {
+            return Err(vm.new_value_error("size 须为 (宽, 高) 二元组"));
+        }
+        let w = u32::try_from_object(vm, elems[0].clone())
+            .map_err(|_| vm.new_type_error("宽须为非负整数"))?;
+        let h = u32::try_from_object(vm, elems[1].clone())
+            .map_err(|_| vm.new_type_error("高须为非负整数"))?;
+        Ok((w, h))
+    }
+
+    fn parse_filter(s: &str) -> Option<wgpu::FilterMode> {
+        match s {
+            "linear" => Some(wgpu::FilterMode::Linear),
+            "nearest" => Some(wgpu::FilterMode::Nearest),
+            _ => None,
+        }
+    }
+
+    fn parse_mipmap_filter(s: &str) -> Option<wgpu::MipmapFilterMode> {
+        match s {
+            "linear" => Some(wgpu::MipmapFilterMode::Linear),
+            "nearest" => Some(wgpu::MipmapFilterMode::Nearest),
+            _ => None,
+        }
+    }
+
+    fn parse_address(s: &str) -> Option<wgpu::AddressMode> {
+        match s {
+            "clamp" => Some(wgpu::AddressMode::ClampToEdge),
+            "repeat" => Some(wgpu::AddressMode::Repeat),
+            "mirror" => Some(wgpu::AddressMode::MirrorRepeat),
+            "border" => Some(wgpu::AddressMode::ClampToBorder),
+            _ => None,
         }
     }
 
@@ -516,21 +604,51 @@ pub(crate) mod render {
                         b = b.uniform_raw(slot, buf.inner.clone(), buf.size);
                     }
                     "texture" => {
-                        let surf = obj
-                            .downcast_ref::<PySurface>()
-                            .ok_or_else(|| vm.new_type_error("\"texture\" 绑定 obj 须为 pygame.Surface"))?;
-                        b = b.texture_view(slot, surf.surface.texture_view());
+                        // pygame.Surface（面纹理）或 Texture（access.texture
+                        // 产物——自建/计算可写纹理同口）
+                        if let Some(surf) = obj.downcast_ref::<PySurface>() {
+                            b = b.texture_view(slot, surf.surface.texture_view());
+                        } else if let Some(tex) = obj.downcast_ref::<PyTexture>() {
+                            b = b.texture_view(slot, tex.default_view());
+                        } else {
+                            return Err(vm.new_type_error(
+                                "\"texture\" 绑定 obj 须为 pygame.Surface 或 Texture",
+                            ));
+                        }
                     }
                     "sampler" => {
-                        let s = self.access.create_sampler(
-                            "py_render_sampler",
-                            &starfish_render::sampler_desc::SamplerDescriptor::linear_clamp(),
-                        );
-                        b = b.sampler(slot, Arc::new(s));
+                        // PySampler（access.sampler 产物）或 None（默认线性
+                        // clamp——便捷形态）
+                        let sp = obj.downcast_ref::<PySampler>();
+                        let is_none =
+                            obj.downcast_ref::<rustpython_vm::builtins::PyNone>().is_some();
+                        let s = match (sp, is_none) {
+                            (Some(sp), _) => sp.inner.clone(),
+                            (None, true) => Arc::new(self.access.create_sampler(
+                                "py_render_sampler",
+                                &starfish_render::sampler_desc::SamplerDescriptor::linear_clamp(),
+                            )),
+                            _ => {
+                                return Err(vm.new_type_error(
+                                    "\"sampler\" 绑定 obj 须为 Sampler 或 None",
+                                ))
+                            }
+                        };
+                        b = b.sampler(slot, s);
+                    }
+                    "storage" | "storage_rw" => {
+                        // 只读存储（顶点/片元/计算三态可见）与可写存储
+                        //（仅计算段）——obj 须为 usage="storage" 的 Buffer
+                        let buf = obj.downcast_ref::<PyBuffer>().ok_or_else(|| {
+                            vm.new_type_error(format!(
+                                "{kind:?} 绑定 obj 须为 Buffer（usage=\"storage\" 创建）"
+                            ))
+                        })?;
+                        b = b.storage_raw(slot, buf.inner.clone(), kind == "storage");
                     }
                     other => {
                         return Err(vm.new_value_error(format!(
-                            "kind 须为 uniform/texture/sampler，实际 {other:?}"
+                            "kind 须为 uniform/texture/sampler/storage/storage_rw，实际 {other:?}"
                         )))
                     }
                 }
@@ -577,11 +695,21 @@ pub(crate) mod render {
                     )))
                 }
             };
-            let mut b = self
-                .access
-                .render_pipeline_builder_2d(&args.shader.inner)
-                .topology(topo)
-                .cull(cull);
+            let mut b = match args.flavor.as_deref().unwrap_or("2d") {
+                "2d" => self
+                    .access
+                    .render_pipeline_builder_2d(&args.shader.inner),
+                "3d" => self
+                    .access
+                    .render_pipeline_builder_3d(&args.shader.inner),
+                other => {
+                    return Err(vm.new_value_error(format!(
+                        "flavor 须为 2d/3d，实际 {other:?}"
+                    )))
+                }
+            }
+            .topology(topo)
+            .cull(cull);
             if args.depth.unwrap_or(false) {
                 b = b.depth_mode(DepthMode::Standard).depth_write(true);
             }
@@ -665,6 +793,106 @@ pub(crate) mod render {
             }
             Ok(())
         }
+
+        /// sampler(mag="linear", min="linear", mipmap="linear",
+        /// address="clamp", label=None) -> Sampler：采样器（字符串安全
+        /// 收参；address 同时应用 u/v/w；compare 语义 v2 再放）
+        #[pymethod]
+        fn sampler(&self, args: SamplerArgs, vm: &VirtualMachine) -> PyResult<PyRef<PySampler>> {
+            let err = |what: &str, s: &str| {
+                vm.new_value_error(format!(
+                    "{what} 取值非法：{s:?}（filter = linear/nearest；address = \
+                     clamp/repeat/mirror/border）"
+                ))
+            };
+            let mag_s = args.mag.as_deref().unwrap_or("linear");
+            let min_s = args.min.as_deref().unwrap_or("linear");
+            let mip_s = args.mipmap.as_deref().unwrap_or("linear");
+            let addr_s = args.address.as_deref().unwrap_or("clamp");
+            let mag = parse_filter(mag_s).ok_or_else(|| err("mag", mag_s))?;
+            let min = parse_filter(min_s).ok_or_else(|| err("min", min_s))?;
+            let mip = parse_mipmap_filter(mip_s).ok_or_else(|| err("mipmap", mip_s))?;
+            let addr = parse_address(addr_s).ok_or_else(|| err("address", addr_s))?;
+            let desc = starfish_render::sampler_desc::SamplerDescriptor::new(
+                min, mag, mip, addr, addr, addr, None,
+            );
+            let s = self.access.create_sampler(
+                args.label.as_deref().unwrap_or("py_render_sampler"),
+                &desc,
+            );
+            Ok(PySampler { inner: Arc::new(s) }.into_ref(&vm.ctx))
+        }
+
+        /// texture(size=(w,h), rgba=None, kind="sampled", label=None)
+        /// -> Texture：GPU 纹理（rgba = w×h×4 字节列表，None = 零填充；
+        /// kind 目前 "sampled"，storage 形态随计算纹理 v2）
+        #[pymethod]
+        fn texture(&self, args: TextureArgs, vm: &VirtualMachine) -> PyResult<PyRef<PyTexture>> {
+            let (w, h) = parse_size_2d(&args.size, vm)?;
+            let kind = args.kind.as_deref().unwrap_or("sampled");
+            if kind != "sampled" {
+                return Err(vm.new_value_error(format!(
+                    "kind 须为 sampled（storage 形态 v2），实际 {kind:?}"
+                )));
+            }
+            let bytes: Vec<u8> = match &args.rgba {
+                Some(o) => vm.extract_elements_with(o, |x| {
+                    u8::try_from_object(vm, x.clone())
+                })?,
+                None => vec![0u8; (w as usize) * (h as usize) * 4],
+            };
+            if bytes.len() != (w as usize) * (h as usize) * 4 {
+                return Err(vm.new_value_error(format!(
+                    "rgba 字节数 {} ≠ {w}×{h}×4",
+                    bytes.len()
+                )));
+            }
+            let image_data = starfish_render::resources::image::ImageData::rgba8(w, h, bytes)
+                .map_err(|_| {
+                    vm.new_value_error("rgba 字节数与尺寸不符")
+                })?;
+            let desc = sf::RenderTextureDescriptor::new(
+                sf::RenderTextureSemantic::Color,
+                sf::RenderTextureUsage::Sampled,
+                sf::RenderTextureDim::D2,
+                None,
+                None,
+            );
+            let tex = self.access.create_texture_from_rgba8_2d(
+                args.label.as_deref().unwrap_or("py_render_texture"),
+                &image_data,
+                desc,
+            );
+            Ok(PyTexture {
+                texture: Arc::new(tex),
+            }
+            .into_ref(&vm.ctx))
+        }
+
+        /// compute_pipeline(shader, bind_groups, entry="cs_main",
+        /// label=None) -> ComputePipeline：计算管线（bind_groups = 计算
+        /// 布局声明；Dispatch 经 raw_compute 会话）
+        #[pymethod]
+        fn compute_pipeline(
+            &self,
+            args: ComputePipelineArgs,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyRef<PyComputePipeline>> {
+            let bgs: Vec<PyRef<PyBindGroup>> =
+                vm.extract_elements_with(&args.bind_groups, |o| {
+                    o.clone()
+                        .downcast::<PyBindGroup>()
+                        .map_err(|_| vm.new_type_error("bind_groups 元素须为 bind_group() 产物"))
+                })?;
+            let refs: Vec<&starfish_pygame::render::BindGroup> =
+                bgs.iter().map(|g| &g.inner).collect();
+            let p = self
+                .access
+                .compute_pipeline_builder(&args.shader.inner)
+                .entry_point(args.entry.unwrap_or_else(|| "cs_main".into()))
+                .build(&refs, args.label.as_deref());
+            Ok(PyComputePipeline { inner: p }.into_ref(&vm.ctx))
+        }
     }
 
     // ── 资源句柄（access.* 产物；透明句柄——wgpu 对象不出 Python 界）──
@@ -742,6 +970,59 @@ pub(crate) mod render {
 
     #[pyclass]
     impl PyPipeline {}
+
+    /// 计算管线（access.compute_pipeline 产物；透明句柄）
+    #[derive(PyPayload)]
+    #[pyattr]
+    #[pyclass(module = "pygame.render", name = "ComputePipeline", unhashable = true)]
+    pub(crate) struct PyComputePipeline {
+        inner: Arc<sf::ComputePipeline>,
+    }
+
+    #[pyclass]
+    impl PyComputePipeline {}
+
+    /// 采样器（access.sampler 产物；透明句柄）
+    #[derive(PyPayload)]
+    #[pyattr]
+    #[pyclass(module = "pygame.render", name = "Sampler", unhashable = true)]
+    pub(crate) struct PySampler {
+        inner: Arc<wgpu::Sampler>,
+    }
+
+    #[pyclass]
+    impl PySampler {}
+
+    /// GPU 纹理（access.texture 产物；透明句柄——sampled 采样 /
+    /// bind_group "texture" 绑定同口）
+    #[derive(PyPayload)]
+    #[pyattr]
+    #[pyclass(module = "pygame.render", name = "Texture", unhashable = true)]
+    pub(crate) struct PyTexture {
+        texture: Arc<sf::RenderTexture>,
+    }
+
+    #[pyclass]
+    impl PyTexture {
+        /// size() -> (int, int)（像素）
+        #[pymethod]
+        fn size(&self) -> (u32, u32) {
+            (self.texture.width(), self.texture.height())
+        }
+
+        /// 默认采样视图（2D 全 mip；缓存于纹理内部）
+        pub(crate) fn default_view(&self) -> Arc<wgpu::TextureView> {
+            use sf::RenderTextureViewKey;
+            self.texture.get_view(&RenderTextureViewKey {
+                base_mip: 0,
+                mip_count: 1,
+                base_layer: 0,
+                layer_count: None,
+                dimension: wgpu::TextureViewDimension::D2,
+                aspect: wgpu::TextureAspect::All,
+            })
+        }
+    }
 
     // ── 主屏查询（两入口之二——attachment/格式/尺寸经 RenderSurface）──
 
@@ -1071,6 +1352,95 @@ pub(crate) mod render {
         }
         .into_ref(&vm.ctx))
     }
+
+    // ── raw_compute 计算会话（compute 绑定收官）──────────────────────
+
+    /// 计算命令（记录-回放；独立 compute pass——无附件，资源经 bind
+    /// group 访问）
+    enum ComputeCmd {
+        Pipeline(PyRef<PyComputePipeline>),
+        BindGroup(u32, PyRef<PyBindGroup>),
+        Dispatch(u32, u32, u32),
+    }
+
+    /// raw_compute 计算会话（`with t.raw_compute() as p:`——p 记录
+    /// set_pipeline/set_bind_group/dispatch，__exit__ 排程到 present 收口
+    /// 回放（独立 compute pass，恒在渲染内容之后提交）。同帧多会话各持
+    /// 命令，按登记序执行。
+    #[derive(PyPayload)]
+    #[pyattr]
+    #[pyclass(module = "pygame.render", name = "RawCompute", unhashable = true)]
+    pub(crate) struct PyRawCompute {
+        cmds: std::cell::RefCell<Vec<ComputeCmd>>,
+    }
+
+    #[pyclass]
+    impl PyRawCompute {
+        #[pymethod]
+        fn __enter__(zelf: PyRef<Self>) -> PyRef<Self> {
+            zelf
+        }
+
+        /// 会话收口：排程到 present 收口（独立 compute pass 回放）
+        #[pymethod]
+        fn __exit__(&self, _exc: rustpython_vm::function::FuncArgs, vm: &VirtualMachine) -> bool {
+            let cmds = std::mem::take(&mut *self.cmds.borrow_mut());
+            let replay = move |octx: &mut sf::OverlayCtx| {
+                octx.with_compute_pass("raw_compute", |cp| {
+                    for c in &cmds {
+                        match c {
+                            ComputeCmd::Pipeline(p) => cp.set_pipeline(&p.inner),
+                            // bind 组位按登记序自动排（引擎 compute pass
+                            // 定约——set_pipeline 后从 0 递增）
+                            ComputeCmd::BindGroup(_i, g) => cp.set_bind_group(&g.inner),
+                            ComputeCmd::Dispatch(x, y, z) => cp.dispatch(*x, *y, *z),
+                        }
+                    }
+                });
+            };
+            let _ = starfish_pygame::render::session::with_screen(|pass| {
+                pass.defer_overlay(Box::new(replay))
+            });
+            let _ = vm;
+            false
+        }
+
+        /// set_pipeline(pipeline)
+        #[pymethod]
+        fn set_pipeline(&self, pipeline: PyRef<PyComputePipeline>) {
+            self.cmds.borrow_mut().push(ComputeCmd::Pipeline(pipeline));
+        }
+
+        /// set_bind_group(index, group)
+        #[pymethod]
+        fn set_bind_group(&self, index: u32, group: PyRef<PyBindGroup>) {
+            self.cmds.borrow_mut().push(ComputeCmd::BindGroup(index, group));
+        }
+
+        /// dispatch(x, y=1, z=1)：工作组派发
+        #[pymethod]
+        fn dispatch(&self, x: u32, y: Option<u32>, z: Option<u32>) {
+            self.cmds
+                .borrow_mut()
+                .push(ComputeCmd::Dispatch(x, y.unwrap_or(1), z.unwrap_or(1)));
+        }
+    }
+
+    /// raw_compute() -> RawCompute：计算会话入口（主屏版须在 with
+    /// screen.render() 块内——排程经活跃会话，同 raw_render）
+    pub(crate) fn raw_compute_session(
+        vm: &VirtualMachine,
+    ) -> PyResult<PyRef<PyRawCompute>> {
+        starfish_pygame::render::session::with_screen(|_| {}).map_err(|_| {
+            vm.new_type_error(
+                "raw_compute 须在 `with screen.render():` 会话块内调用（p = t.raw_compute()）",
+            )
+        })?;
+        Ok(PyRawCompute {
+            cmds: std::cell::RefCell::new(Vec::new()),
+        }
+        .into_ref(&vm.ctx))
+    }
     pydbg!(PyResourceAccess, "ResourceAccess(<gpu>)");
     pydbg!(PyShader, "Shader(<wgsl>)");
     pydbg!(PyBuffer, "Buffer(<raw>)");
@@ -1079,6 +1449,10 @@ pub(crate) mod render {
     pydbg!(PyPipeline, "Pipeline(<gpu>)");
     pydbg!(PyColorAttachment, "ColorAttachment(<frame>)");
     pydbg!(PyRawPass, "RawPass(<recording>)");
+    pydbg!(PySampler, "Sampler(<gpu>)");
+    pydbg!(PyTexture, "Texture(<gpu>)");
+    pydbg!(PyComputePipeline, "ComputePipeline(<gpu>)");
+    pydbg!(PyRawCompute, "RawCompute(<recording>)");
 }
 
 pub(crate) use render::module_def;

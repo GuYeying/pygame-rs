@@ -685,6 +685,17 @@ pub mod pygame {
             crate::rpy::pygame::render::render::raw_pass(depth, None, vm)
         }
 
+        /// raw_compute() -> RawCompute：计算会话（compute pipeline 直绘）
+        /// ——`with t.raw_compute() as p:` 记录 set_pipeline/set_bind_group
+        /// /dispatch，present 收口回放（独立 compute pass）
+        #[pymethod]
+        fn raw_compute(
+            &self,
+            vm: &VirtualMachine,
+        ) -> PyResult<PyRef<crate::rpy::pygame::render::render::PyRawCompute>> {
+            crate::rpy::pygame::render::render::raw_compute_session(vm)
+        }
+
         /// blit_area(src, dest, area, color=None)：UV 子区域贴图
         /// （with_batch push_quad_uv 直通——源面像素坐标子区域一次四边形）
         #[pymethod]
