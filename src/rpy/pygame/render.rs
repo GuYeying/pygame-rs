@@ -1117,6 +1117,13 @@ pub(crate) mod render {
         starfish_pygame::display::get_screen().frame_state()
     }
 
+    /// set_fb_dump(on)：帧缓冲取证 dump 开关（诊断——present 内 resolve
+    /// 后采样帧缓冲，经 console_log 落 [fb-dump] 行；Android = dev_log）
+    #[pyfunction]
+    fn set_fb_dump(on: bool) {
+        starfish_render::render_surface::set_fb_dump(on);
+    }
+
     /// screen_probe() -> [(x, y, r, g, b, a), ...]：帧缓冲网格回读
     /// （诊断专用；**flip 前调用有效**——读当前交换链真实内容，绕过
     /// 截图/合成器）。同时经 console_log 落 [screen-probe] 行
