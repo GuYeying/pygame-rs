@@ -1110,6 +1110,36 @@ pub(crate) mod render {
         }
     }
 
+    /// screen_probe() -> [(x, y, r, g, b, a), ...]：帧缓冲网格回读
+    /// （诊断专用；**flip 前调用有效**——读当前交换链真实内容，绕过
+    /// 截图/合成器）。同时经 console_log 落 [screen-probe] 行
+    ///（Android = dev_log.txt 可取证）。
+    #[pyfunction]
+    fn screen_probe(vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        let samples = starfish_pygame::display::get_screen().readback_probe();
+        let fmt: Vec<String> = samples
+            .iter()
+            .map(|(x, y, c)| format!("({x},{y})=#{:02X}{:02X}{:02X}", c[0], c[1], c[2]))
+            .collect();
+        starfish_std::debug::console_log(&format!("[screen-probe] {}", fmt.join(" ")));
+        let items: Vec<PyObjectRef> = samples
+            .iter()
+            .map(|(x, y, c)| {
+                vm.ctx
+                    .new_tuple(vec![
+                        vm.ctx.new_int(*x as i64).into(),
+                        vm.ctx.new_int(*y as i64).into(),
+                        vm.ctx.new_int(c[0] as i64).into(),
+                        vm.ctx.new_int(c[1] as i64).into(),
+                        vm.ctx.new_int(c[2] as i64).into(),
+                        vm.ctx.new_int(c[3] as i64).into(),
+                    ])
+                    .into()
+            })
+            .collect();
+        Ok(vm.ctx.new_list(items).into())
+    }
+
     // ══════════════════════════════════════════════════════════════
     // 批次 D：raw_render 直绘会话（命令记录 → 提交时点回放）
     // ══════════════════════════════════════════════════════════════
