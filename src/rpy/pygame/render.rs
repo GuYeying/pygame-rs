@@ -1110,6 +1110,13 @@ pub(crate) mod render {
         }
     }
 
+    /// screen_frame_state() -> str：帧生命周期状态（诊断——begun/
+    /// color_frame/物理尺寸，定位探针时序与跳帧）
+    #[pyfunction]
+    fn screen_frame_state() -> String {
+        starfish_pygame::display::get_screen().frame_state()
+    }
+
     /// screen_probe() -> [(x, y, r, g, b, a), ...]：帧缓冲网格回读
     /// （诊断专用；**flip 前调用有效**——读当前交换链真实内容，绕过
     /// 截图/合成器）。同时经 console_log 落 [screen-probe] 行
