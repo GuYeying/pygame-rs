@@ -4007,7 +4007,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "pygame-rs"
-version = "0.3.58"
+version = "0.3.60"
 dependencies = [
  "egui-starfish-we",
  "egui-wgpu",
@@ -5492,6 +5492,7 @@ version = "0.9.58"
 dependencies = [
  "android-activity",
  "js-sys",
+ "libc",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
