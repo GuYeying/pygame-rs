@@ -431,6 +431,8 @@ pub(crate) mod render {
             "pos3" => vec![Float32x3],
             "pos3uv2" => vec![Float32x3, Float32x2],
             "pos3color4" => vec![Float32x3, Float32x4],
+            // 角点模板（GPU 粒子：每粒子一个三角形，位置经 uniform/storage）
+            "corner2" => vec![Float32x2],
             // SpriteVertex 同布局（引擎批顶点——互操作）
             "pos3uv2color4" => vec![Float32x3, Float32x2, Float32x4],
             _ => return None,
@@ -443,6 +445,7 @@ pub(crate) mod render {
             "pos3" => 3,
             "pos3uv2" => 5,
             "pos3color4" => 7,
+            "corner2" => 2,
             "pos3uv2color4" => 9,
             _ => 0,
         }
@@ -506,7 +509,11 @@ pub(crate) mod render {
             let usage = match args.usage.as_deref().unwrap_or("uniform") {
                 "uniform" => wgpu::BufferUsages::UNIFORM,
                 "indirect" => wgpu::BufferUsages::INDIRECT,
-                "storage" => wgpu::BufferUsages::STORAGE,
+                // storage：+COPY_SRC（compute 写后经 encoder copy 到
+                // uniform 供渲染读取的 GPU 闭环需要）
+                "storage" => wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
                 other => {
                     return Err(vm.new_value_error(format!(
                         "usage 须为 uniform/indirect/storage，实际 {other:?}"
@@ -1405,6 +1412,8 @@ pub(crate) mod render {
         Pipeline(PyRef<PyComputePipeline>),
         BindGroup(u32, PyRef<PyBindGroup>),
         Dispatch(u32, u32, u32),
+        /// compute 写 storage → copy 到 uniform 的 GPU 闭环命令
+        CopyBuffer(PyRef<PyBuffer>, PyRef<PyBuffer>, u64),
     }
 
     /// raw_compute 计算会话（`with t.raw_compute() as p:`——p 记录
@@ -1429,18 +1438,29 @@ pub(crate) mod render {
         #[pymethod]
         fn __exit__(&self, _exc: rustpython_vm::function::FuncArgs, vm: &VirtualMachine) -> bool {
             let cmds = std::mem::take(&mut *self.cmds.borrow_mut());
+            // 分离：compute pass 内命令 / pass 后的缓冲拷贝（copy 走
+            // encoder、不在 pass 内——拷贝源是本 pass 的写入结果）
+            let (compute_cmds, copies): (Vec<_>, Vec<_>) = cmds
+                .into_iter()
+                .partition(|c| !matches!(c, ComputeCmd::CopyBuffer(_, _, _)));
             let replay = move |octx: &mut sf::OverlayCtx| {
                 octx.with_compute_pass("raw_compute", |cp| {
-                    for c in &cmds {
+                    for c in &compute_cmds {
                         match c {
                             ComputeCmd::Pipeline(p) => cp.set_pipeline(&p.inner),
                             // bind 组位按登记序自动排（引擎 compute pass
                             // 定约——set_pipeline 后从 0 递增）
                             ComputeCmd::BindGroup(_i, g) => cp.set_bind_group(&g.inner),
                             ComputeCmd::Dispatch(x, y, z) => cp.dispatch(*x, *y, *z),
+                            _ => {}
                         }
                     }
                 });
+                for c in &copies {
+                    if let ComputeCmd::CopyBuffer(src, dst, size) = c {
+                        octx.copy_buffer_to_buffer(&src.inner, &dst.inner, *size);
+                    }
+                }
             };
             let _ = starfish_pygame::render::session::with_screen(|pass| {
                 pass.defer_overlay(Box::new(replay))
@@ -1467,6 +1487,16 @@ pub(crate) mod render {
             self.cmds
                 .borrow_mut()
                 .push(ComputeCmd::Dispatch(x, y.unwrap_or(1), z.unwrap_or(1)));
+        }
+
+        /// copy_buffer(src, dst, size)：compute 写 storage → copy 到
+        /// uniform 的 GPU 闭环命令（render 端读 uniform——顶点段 SSBO
+        /// 设备相关的规避路径）。size 字节。
+        #[pymethod]
+        fn copy_buffer(&self, src: PyRef<PyBuffer>, dst: PyRef<PyBuffer>, size: u64) {
+            self.cmds
+                .borrow_mut()
+                .push(ComputeCmd::CopyBuffer(src, dst, size));
         }
     }
 
