@@ -61,7 +61,7 @@ fn net_log(msg: &str) {
     }
 }
 
-/// CJK 字体预载链（三平台；批次 G + Android 系统候选链——与
+/// CJK 字体预载链（三平台；批次 G + Android/Linux 系统候选链——与
 /// binding_probe 保持一字不差，命中即 log）
 pub async fn preload_cjk(tag: &str) {
     #[cfg(windows)]
@@ -89,6 +89,33 @@ pub async fn preload_cjk(tag: &str) {
             "/system/fonts/HarmonyOS_Sans_SC.ttf",
             "/system/fonts/miui.ttf",
             "/system/fonts/DroidSansFallback.ttf",
+        ];
+        let mut hit = false;
+        for p in CJK_CANDIDATES {
+            match starfish_io::read(p).await {
+                Ok(b) => {
+                    starfish_pygame::font::preload("cjk", b);
+                    dlog(tag, &format!("CJK 字体已预载（系统 {p}）"));
+                    hit = true;
+                    break;
+                }
+                Err(_) => continue,
+            }
+        }
+        if !hit {
+            dlog(tag, "CJK 系统字体候选全 miss（中文将缺字）");
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        const CJK_CANDIDATES: [&str; 7] = [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",   // Debian/Ubuntu fonts-noto-cjk
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",        // Arch/Fedora 布局
+            "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf", // 按语言单发 OTF 布局
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",           // 文泉驿微米黑
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",             // 文泉驿正黑
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            "/usr/share/fonts/truetype/droid/DroidSansFallback.ttf",
         ];
         let mut hit = false;
         for p in CJK_CANDIDATES {
